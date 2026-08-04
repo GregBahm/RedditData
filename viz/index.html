@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reddit Posting History — GregBahm</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --dot: #898781;
+    --record-high: #2a78d6;
+    --record-low: #e34948;
+    --ov-freq: #eb6834;
+    --ov-net: #1baf7a;
+    --ov-pct: #4a3aa7;
+    --ov-avg: #e87ba4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --gridline: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --dot: #898781;
+      --record-high: #3987e5;
+      --record-low: #e66767;
+      --ov-freq: #d95926;
+      --ov-net: #199e70;
+      --ov-pct: #9085e9;
+      --ov-avg: #d55181;
+    }
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  header {
+    padding: 14px 20px 10px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 17px; font-weight: 600; }
+  .tabs { display: flex; gap: 4px; }
+  .tab {
+    font: inherit;
+    font-size: 13px;
+    padding: 4px 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--text-primary); }
+  .tab.active {
+    background: var(--surface-1);
+    border-color: var(--border);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .mode-top #legendMain, .mode-top #legendOv { display: none; }
+  header .sub { font-size: 13px; color: var(--text-secondary); }
+  .controls {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 13px;
+  }
+  .legend { display: flex; gap: 14px; align-items: center; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .swatch.sq { border-radius: 2px; }
+  .legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .legend label input { margin: 0; }
+  .key { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  button.toggle {
+    font: inherit;
+    color: var(--text-primary);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  button.toggle:hover { border-color: var(--baseline); }
+  #chart-wrap {
+    flex: 1;
+    min-height: 0;
+    margin: 0 20px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  #chart { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #chart.dragging { cursor: grabbing; }
+  #hint {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+  #divider {
+    height: 12px;
+    margin: 0 20px;
+    cursor: ns-resize;
+    touch-action: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  #divider::after {
+    content: '';
+    width: 48px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--baseline);
+    opacity: 0.6;
+  }
+  #divider:hover::after, #divider.dragging::after { opacity: 1; }
+  #detail {
+    height: 168px;
+    margin: 0 20px 16px;
+    flex: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    overflow-y: auto;
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+  #detail .placeholder { color: var(--text-muted); }
+  #detail .meta {
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  #detail .score { font-size: 20px; font-weight: 600; }
+  #detail .meta .k { color: var(--text-secondary); }
+  #detail .badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 10px;
+    color: #fff;
+  }
+  #detail .badge.high { background: var(--record-high); }
+  #detail .badge.low { background: var(--record-low); }
+  #detail .title { font-weight: 600; margin-bottom: 4px; }
+  #detail .thread { font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
+  #detail .body { color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
+  #detail a { color: var(--record-high); text-decoration: none; }
+  #detail a:hover { text-decoration: underline; }
+  #detail .pin-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Reddit posting history</h1>
+  <nav class="tabs">
+    <button class="tab active" id="tabTime">Timeline</button>
+    <button class="tab" id="tabTop">Top comments</button>
+    <button class="tab" id="tabDist">Score distribution</button>
+    <button class="tab" id="tabLdist">Length distribution</button>
+  </nav>
+  <span class="sub" id="subtitle">loading…</span>
+  <div class="controls">
+    <div class="legend" id="legendMain">
+      <span><span class="swatch" style="background:var(--record-high)"></span>record high</span>
+      <span><span class="swatch" style="background:var(--record-low)"></span>record low</span>
+      <span><span class="swatch sq" style="background:var(--dot)"></span>post</span>
+      <span><span class="swatch" style="background:var(--dot)"></span>comment</span>
+    </div>
+    <div class="legend" id="legendOv">
+      <label><input type="checkbox" id="ovFreq"><span class="key" style="background:var(--ov-freq)"></span>items/week</label>
+      <label><input type="checkbox" id="ovNet"><span class="key" style="background:var(--ov-net)"></span>net score/week</label>
+      <label><input type="checkbox" id="ovPct"><span class="key" style="background:var(--ov-pct)"></span>% positive/week</label>
+      <label><input type="checkbox" id="ovAvg"><span class="key" style="background:var(--ov-avg)"></span>avg score/week</label>
+    </div>
+    <button class="toggle" id="scaleToggle" title="Switch score axis scale">score: log</button>
+    <button class="toggle" id="resetView" title="Reset pan and zoom">reset view</button>
+  </div>
+</header>
+<div id="chart-wrap">
+  <canvas id="chart"></canvas>
+  <div id="hint">scroll to zoom · drag to pan · click a dot to pin</div>
+</div>
+<div id="divider" title="Drag to resize"></div>
+<div id="detail"><span class="placeholder">Hover over a dot to see the post here.</span></div>
+
+<script src="data.js"></script>
+<script>
+(() => {
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('chart-wrap');
+  const detail = document.getElementById('detail');
+  const subtitle = document.getElementById('subtitle');
+  const scaleToggle = document.getElementById('scaleToggle');
+
+  // ---- data prep ----
+  const items = REDDIT_DATA.map(d => ({
+    ...d,
+    score: +d.score,
+    len: (d.body || '').length,
+    time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
+  })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
+  items.sort((a, b) => a.time - b.time);
+
+  // running record-high / record-low flags, chronological
+  let hi = -Infinity, lo = Infinity;
+  for (const d of items) {
+    d.recordHigh = d.score > hi;
+    d.recordLow = d.score < lo;
+    if (d.score > hi) hi = d.score;
+    if (d.score < lo) lo = d.score;
+  }
+
+  const t0 = items[0].time, t1 = items[items.length - 1].time;
+
+  // ---- weekly aggregates for overlays (weeks start Monday UTC) ----
+  const MS_WEEK = 6048e5;
+  const w0 = (() => {
+    const d = new Date(t0);
+    const day = (d.getUTCDay() + 6) % 7;
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
+  })();
+  const weeks = Array.from({ length: Math.floor((t1 - w0) / MS_WEEK) + 1 },
+    (_, i) => ({ t: w0 + i * MS_WEEK + MS_WEEK / 2, count: 0, net: 0, pos: 0 }));
+  for (const d of items) {
+    const w = weeks[Math.floor((d.time - w0) / MS_WEEK)];
+    w.count++;
+    w.net += d.score;
+    if (d.score > 1) w.pos++;
+  }
+  const sMin = Math.min(...items.map(d => d.score));
+  const sMax = Math.max(...items.map(d => d.score));
+  subtitle.textContent =
+    `${items.length.toLocaleString()} posts & comments, ` +
+    `${new Date(t0).getFullYear()}–${new Date(t1).getFullYear()} · ` +
+    `scores ${sMin.toLocaleString()} to ${sMax.toLocaleString()}`;
+
+  // top comments by score, for the "Top comments" view
+  const topItems = items.filter(d => d.type === 'comment')
+    .sort((a, b) => b.score - a.score || a.time - b.time)
+    .slice(0, 1000);
+  topItems.forEach((d, i) => { d.rank = i + 1; });
+
+  // every item ranked by score, for the "Score distribution" view
+  const distItems = items.slice().sort((a, b) => b.score - a.score || a.time - b.time);
+  distItems.forEach((d, i) => { d.drank = i + 1; });
+
+  // every item ranked by length, for the "Length distribution" view
+  const lenItems = items.slice().sort((a, b) => b.len - a.len || a.time - b.time);
+  lenItems.forEach((d, i) => { d.lrank = i + 1; });
+
+  // ---- scales / view modes ----
+  // 'time': x = time, y = score. 'top': x = rank among top comments, y = comment length.
+  // 'dist': x = rank among all items, y = score.
+  let mode = 'time';
+  let useLog = true;
+  const symlog = s => Math.sign(s) * Math.log10(1 + Math.abs(s));
+  const activeList = () => mode === 'time' ? items : mode === 'top' ? topItems : mode === 'dist' ? distItems : lenItems;
+  const xv = d => mode === 'time' ? d.time : mode === 'top' ? d.rank : mode === 'dist' ? d.drank : d.lrank;
+  const yvRaw = d => (mode === 'top' || mode === 'ldist') ? d.len : d.score;
+  const yv = d => useLog ? symlog(yvRaw(d)) : yvRaw(d);
+
+  const M = { left: 56, right: 24, top: 28, bottom: 40 };
+  let W = 0, H = 0, dpr = 1;
+
+  // base (untransformed) data->pixel mapping, recomputed on resize / scale change
+  let bx = { min: t0, max: t1 }, by = { min: 0, max: 1 };
+  function computeBase() {
+    const ys = activeList().map(yv);
+    let ymin = Math.min(...ys), ymax = Math.max(...ys);
+    if (mode === 'top') ymin = 0; // bars grow from the zero baseline
+    const pad = (ymax - ymin) * 0.04 || 1;
+    by = { min: ymin - pad, max: ymax + pad };
+    if (mode === 'time') {
+      const tpad = (t1 - t0) * 0.02 || 1;
+      bx = { min: t0 - tpad, max: t1 + tpad };
+    } else {
+      const n = activeList().length;
+      const rpad = n * 0.02 || 1;
+      bx = { min: 1 - rpad, max: n + rpad };
+    }
+  }
+
+  // pan/zoom transform in pixel space; y is inverted (bigger score = higher on screen)
+  let view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+  const plotW = () => W - M.left - M.right;
+  const plotH = () => H - M.top - M.bottom;
+  const xPix = t => view.tx + view.kx * (M.left + (t - bx.min) / (bx.max - bx.min) * plotW());
+  const yPix = v => view.ty + view.ky * (M.top + (by.max - v) / (by.max - by.min) * plotH());
+  const xInv = px => bx.min + ((px - view.tx) / view.kx - M.left) / plotW() * (bx.max - bx.min);
+  const yInv = py => by.max - ((py - view.ty) / view.ky - M.top) / plotH() * (by.max - by.min);
+
+  // ---- rendering ----
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  let C = {};
+  function readColors() {
+    C = {
+      surface: css('--surface-1'), grid: css('--gridline'), baseline: css('--baseline'),
+      muted: css('--text-muted'), dot: css('--dot'),
+      high: css('--record-high'), low: css('--record-low'),
+      ovFreq: css('--ov-freq'), ovNet: css('--ov-net'), ovPct: css('--ov-pct'),
+      ovAvg: css('--ov-avg'),
+    };
+  }
+
+  function yTicks() {
+    if (!useLog) {
+      const lo = yInv(H - M.bottom), hi = yInv(M.top);
+      const span = hi - lo;
+      const step = Math.pow(10, Math.floor(Math.log10(span / 6)));
+      const mult = span / 6 / step >= 5 ? 5 : span / 6 / step >= 2 ? 2 : 1;
+      const s = step * mult;
+      const out = [];
+      const i0 = Math.ceil(lo / s);
+      for (let i = i0; i * s <= hi; i++) {
+        const v = i * s;
+        out.push({ v, label: (v === 0 ? 0 : v).toLocaleString() });
+      }
+      return out;
+    }
+    const out = [{ v: 0, label: '0' }];
+    for (const m of [1, 10, 100, 1000, 10000, 100000]) {
+      const lbl = m >= 1000 ? (m / 1000) + 'k' : String(m);
+      out.push({ v: symlog(m), label: lbl });
+      out.push({ v: symlog(-m), label: '−' + lbl });
+    }
+    return out.filter(t => {
+      const py = yPix(t.v);
+      return py >= M.top - 4 && py <= H - M.bottom + 4;
+    });
+  }
+
+  function xTicks() {
+    const lo = xInv(M.left), hi = xInv(W - M.right);
+    if (mode !== 'time') {
+      const n = activeList().length;
+      const span = hi - lo;
+      const step = Math.pow(10, Math.floor(Math.log10(span / 8)));
+      const mult = span / 8 / step >= 5 ? 5 : span / 8 / step >= 2 ? 2 : 1;
+      const s = step * mult;
+      const out = [];
+      for (let i = Math.max(1, Math.ceil(lo / s)); i * s <= Math.min(hi, n); i++) {
+        out.push({ v: i * s, label: (i * s).toLocaleString() });
+      }
+      return out;
+    }
+    const spanYears = (hi - lo) / 3.156e10;
+    const out = [];
+    if (spanYears > 2.5) {
+      const step = spanYears > 16 ? 2 : 1;
+      const y0 = new Date(lo).getUTCFullYear();
+      const y1 = new Date(hi).getUTCFullYear() + 1;
+      for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
+        out.push({ v: Date.UTC(y, 0, 1), label: String(y) });
+      }
+    } else {
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const stepM = spanYears > 1.2 ? 3 : spanYears > 0.4 ? 1 : 0;
+      if (stepM) {
+        const d = new Date(lo);
+        let y = d.getUTCFullYear(), m = Math.ceil(d.getUTCMonth() / stepM) * stepM;
+        for (;;) {
+          if (m >= 12) { y++; m -= 12; }
+          const t = Date.UTC(y, m, 1);
+          if (t > hi) break;
+          out.push({ v: t, label: m === 0 ? String(y) : months[m] });
+          m += stepM;
+        }
+      } else {
+        const spanDays = (hi - lo) / 8.64e7;
+        const stepD = spanDays > 40 ? 14 : spanDays > 12 ? 7 : 1;
+        let t = Math.ceil(lo / (8.64e7 * stepD)) * 8.64e7 * stepD;
+        for (; t <= hi; t += 8.64e7 * stepD) {
+          const d = new Date(t);
+          out.push({ v: t, label: `${months[d.getUTCMonth()]} ${d.getUTCDate()}` });
+        }
+      }
+    }
+    return out.filter(t => {
+      const px = xPix(t.v);
+      return px >= M.left - 4 && px <= W - M.right + 4;
+    });
+  }
+
+  let hovered = null, pinned = null;
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    // gridlines + axis labels
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = C.grid;
+    ctx.fillStyle = C.muted;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (const t of xTicks()) {
+      const px = Math.round(xPix(t.v)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(px, M.top);
+      ctx.lineTo(px, H - M.bottom);
+      ctx.stroke();
+      ctx.fillText(t.label, px, H - M.bottom + 8);
+    }
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (const t of yTicks()) {
+      const py = Math.round(yPix(t.v)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(M.left, py);
+      ctx.lineTo(W - M.right, py);
+      ctx.stroke();
+      ctx.fillText(t.label, M.left - 8, py);
+    }
+    // zero line for score, slightly stronger
+    const zy = Math.round(yPix(0)) + 0.5;
+    if (zy > M.top && zy < H - M.bottom) {
+      ctx.strokeStyle = C.baseline;
+      ctx.beginPath();
+      ctx.moveTo(M.left, zy);
+      ctx.lineTo(W - M.right, zy);
+      ctx.stroke();
+    }
+    // axis titles
+    ctx.fillStyle = C.muted;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(mode === 'time' ? 'time →' : mode === 'ldist' ? 'rank by length →' : 'rank by score →', M.left + plotW() / 2, H - 8);
+    ctx.save();
+    ctx.translate(14, M.top + plotH() / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText((mode === 'top' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
+    ctx.restore();
+
+    // clip to plot area for dots
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(M.left, M.top, plotW(), plotH());
+    ctx.clip();
+
+    if (mode === 'dist' || mode === 'ldist') {
+      // rank-distribution line: one polyline through every item, highest value first
+      ctx.strokeStyle = C.high;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = ctx.lineCap = 'round';
+      ctx.beginPath();
+      let first = true;
+      for (const d of activeList()) {
+        const px = xPix(xv(d)), py = yPix(yv(d));
+        d.px = px; d.py = py;
+        if (first) { ctx.moveTo(px, py); first = false; } else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    } else {
+    // pass 1: ordinary marks (timeline dots / top-comments bars); pass 2: records on top
+    ctx.globalAlpha = mode === 'top' ? 0.85 : 0.55;
+    ctx.fillStyle = C.dot;
+    const slot = mode === 'top' ? xPix(2) - xPix(1) : 0;
+    const barW = mode === 'top' ? Math.max(1, Math.min(slot - 2, 24)) : 0;
+    const yZero = yPix(0);
+    for (const d of activeList()) {
+      const px = xPix(xv(d)), py = yPix(yv(d));
+      d.px = px; d.py = py;
+      if (mode === 'top') {
+        if (px < M.left - barW || px > W - M.right + barW) continue;
+        const r = Math.min(4, barW / 2);
+        ctx.beginPath();
+        ctx.roundRect(px - barW / 2, Math.min(py, yZero), barW, Math.abs(yZero - py), [r, r, 0, 0]);
+        ctx.fill();
+        continue;
+      }
+      if (d.recordHigh || d.recordLow) continue;
+      if (px < M.left - 6 || px > W - M.right + 6 || py < M.top - 6 || py > H - M.bottom + 6) continue;
+      if (d.type === 'post') {
+        ctx.fillRect(px - 3, py - 3, 6, 6);
+      } else {
+        ctx.beginPath();
+        ctx.arc(px, py, 2.6, 0, 6.2832);
+        ctx.fill();
+      }
+    }
+    } // end non-dist marks
+    ctx.globalAlpha = 1;
+
+    if (mode === 'time') {
+    // overlay lines: weekly aggregates on the same (shared) y axis
+    const sv = useLog ? symlog : (v => v);
+    const series = [];
+    if (ovFreq.checked) series.push({ color: C.ovFreq, vals: weeks.map(w => w.count) });
+    if (ovNet.checked) series.push({ color: C.ovNet, vals: weeks.map(w => w.net) });
+    if (ovPct.checked) series.push({ color: C.ovPct, vals: weeks.map(w => w.count ? w.pos / w.count * 100 : null) });
+    if (ovAvg.checked) series.push({ color: C.ovAvg, vals: weeks.map(w => w.count ? w.net / w.count : null) });
+    ctx.lineWidth = 2;
+    ctx.lineJoin = ctx.lineCap = 'round';
+    for (const s of series) {
+      ctx.strokeStyle = s.color;
+      ctx.beginPath();
+      let pen = false;
+      for (let i = 0; i < weeks.length; i++) {
+        const v = s.vals[i];
+        if (v === null) { pen = false; continue; }
+        const lx = xPix(weeks[i].t), ly = yPix(sv(v));
+        if (pen) ctx.lineTo(lx, ly); else { ctx.moveTo(lx, ly); pen = true; }
+      }
+      ctx.stroke();
+    }
+
+    for (const d of items) {
+      if (!d.recordHigh && !d.recordLow) continue;
+      const px = d.px, py = d.py;
+      if (px < M.left - 8 || px > W - M.right + 8 || py < M.top - 8 || py > H - M.bottom + 8) continue;
+      const color = d.recordHigh ? C.high : C.low;
+      // surface ring
+      ctx.fillStyle = C.surface;
+      const R = d.type === 'post' ? 5 : 4.2;
+      if (d.type === 'post') {
+        ctx.fillRect(px - R - 2, py - R - 2, (R + 2) * 2, (R + 2) * 2);
+        ctx.fillStyle = color;
+        ctx.fillRect(px - R, py - R, R * 2, R * 2);
+      } else {
+        ctx.beginPath(); ctx.arc(px, py, R + 2, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(px, py, R, 0, 6.2832); ctx.fill();
+      }
+      // first item can be both records: red ring inside blue
+      if (d.recordHigh && d.recordLow) {
+        ctx.strokeStyle = C.low;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(px, py, R - 1, 0, 6.2832); ctx.stroke();
+      }
+    }
+    } // end mode === 'time'
+
+    // highlight hovered / pinned
+    for (const d of [hovered, pinned]) {
+      if (!d) continue;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      if (mode === 'top') {
+        ctx.strokeStyle = C.muted;
+        const r = Math.min(4, barW / 2);
+        ctx.roundRect(d.px - barW / 2 - 2, Math.min(d.py, yZero) - 2, barW + 4, Math.abs(yZero - d.py) + 2, [r, r, 0, 0]);
+      } else {
+        ctx.strokeStyle = d.recordLow && !d.recordHigh ? C.low : d.recordHigh ? C.high : C.muted;
+        ctx.arc(d.px, d.py, 8, 0, 6.2832);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---- detail panel ----
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function showDetail(d, isPinned) {
+    detail.replaceChildren();
+    detail.scrollTop = 0;
+    if (!d) {
+      detail.append(el('span', 'placeholder', 'Hover over a dot to see the post here.'));
+      return;
+    }
+    const meta = el('div', 'meta');
+    meta.append(el('span', 'score', d.score.toLocaleString() + (Math.abs(d.score) === 1 ? ' point' : ' points')));
+    meta.append(el('span', 'k', new Date(d.time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })));
+    meta.append(el('span', 'k', 'r/' + d.sub));
+    meta.append(el('span', 'k', d.type));
+    if (mode === 'top') {
+      meta.append(el('span', 'k', 'rank #' + d.rank));
+      meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
+    } else if (mode === 'dist') {
+      meta.append(el('span', 'k', 'rank #' + d.drank.toLocaleString() + ' of ' + distItems.length.toLocaleString()));
+      if (d.recordHigh) meta.append(el('span', 'badge high', 'record high'));
+      if (d.recordLow) meta.append(el('span', 'badge low', 'record low'));
+    } else if (mode === 'ldist') {
+      meta.append(el('span', 'k', 'rank #' + d.lrank.toLocaleString() + ' of ' + lenItems.length.toLocaleString()));
+      meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
+    } else {
+      if (d.recordHigh) meta.append(el('span', 'badge high', 'record high'));
+      if (d.recordLow) meta.append(el('span', 'badge low', 'record low'));
+    }
+    detail.append(meta);
+    if (d.title) detail.append(el('div', 'title', d.title));
+    if (d.thread) detail.append(el('div', 'thread', 'in: ' + d.thread));
+    detail.append(el('div', 'body', d.body || (d.type === 'post' ? '(link post — no text)' : '(no text)')));
+    if (isPinned) {
+      const note = el('div', 'pin-note');
+      const a = el('a', null, 'open on reddit ↗');
+      a.href = d.link;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      note.append(a, document.createTextNode('  ·  click empty space to unpin'));
+      detail.append(note);
+    }
+  }
+
+  // ---- interaction ----
+  function nearest(mx, my) {
+    let best = null, bestD = 24 * 24;
+    if (mode === 'dist' || mode === 'ldist') {
+      // line chart: snap to the nearest rank by x alone, crosshair-style
+      let bestDx = Infinity;
+      for (const d of activeList()) {
+        if (d.px < M.left || d.px > W - M.right) continue;
+        const dx = Math.abs(mx - d.px);
+        if (dx < bestDx) { bestDx = dx; best = d; }
+      }
+      return best;
+    }
+    if (mode === 'top') {
+      // bars: distance to the bar's rectangle (center line to top, down to the baseline)
+      const halfW = Math.max(1, Math.min(xPix(2) - xPix(1) - 2, 24)) / 2;
+      const yZero = yPix(0);
+      for (const d of topItems) {
+        if (d.px < M.left || d.px > W - M.right) continue;
+        const dx = Math.max(0, Math.abs(mx - d.px) - halfW);
+        const top = Math.min(d.py, yZero), bot = Math.max(d.py, yZero);
+        const dy = my < top ? top - my : my > bot ? my - bot : 0;
+        const dist = dx * dx + dy * dy;
+        if (dist < bestD) { bestD = dist; best = d; }
+      }
+      return best;
+    }
+    for (const d of activeList()) {
+      if (d.px < M.left || d.px > W - M.right || d.py < M.top || d.py > H - M.bottom) continue;
+      const dx = d.px - mx, dy = d.py - my;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestD) { bestD = dist; best = d; }
+    }
+    return best;
+  }
+
+  let dragging = false, lastX = 0, lastY = 0, moved = 0;
+  canvas.addEventListener('pointerdown', e => {
+    dragging = true; moved = 0;
+    lastX = e.clientX; lastY = e.clientY;
+    canvas.classList.add('dragging');
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (dragging) {
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      view.tx += dx; view.ty += dy;
+      lastX = e.clientX; lastY = e.clientY;
+      requestAnimationFrame(draw);
+      return;
+    }
+    const d = nearest(mx, my);
+    if (d !== hovered) {
+      hovered = d;
+      if (!pinned) showDetail(d, false);
+      requestAnimationFrame(draw);
+    }
+  });
+  canvas.addEventListener('pointerup', e => {
+    dragging = false;
+    canvas.classList.remove('dragging');
+    if (moved < 5) {
+      const r = canvas.getBoundingClientRect();
+      const d = nearest(e.clientX - r.left, e.clientY - r.top);
+      pinned = d;
+      showDetail(d, !!d);
+      requestAnimationFrame(draw);
+    }
+  });
+  canvas.addEventListener('pointerleave', () => {
+    hovered = null;
+    if (!pinned) showDetail(null, false);
+    requestAnimationFrame(draw);
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const f = Math.pow(1.0015, -e.deltaY);
+    view.kx *= f; view.ky *= f;
+    view.tx = mx - (mx - view.tx) * f;
+    view.ty = my - (my - view.ty) * f;
+    requestAnimationFrame(draw);
+  }, { passive: false });
+
+  // draggable divider between chart and detail panel
+  const divider = document.getElementById('divider');
+  let dividerDrag = false;
+  divider.addEventListener('pointerdown', e => {
+    dividerDrag = true;
+    divider.classList.add('dragging');
+    divider.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  divider.addEventListener('pointermove', e => {
+    if (!dividerDrag) return;
+    const h = window.innerHeight - e.clientY - 6 - 16;
+    detail.style.height = Math.max(60, Math.min(window.innerHeight * 0.75, h)) + 'px';
+    resize();
+  });
+  divider.addEventListener('pointerup', () => {
+    dividerDrag = false;
+    divider.classList.remove('dragging');
+  });
+
+  const ovFreq = document.getElementById('ovFreq');
+  const ovNet = document.getElementById('ovNet');
+  const ovPct = document.getElementById('ovPct');
+  const ovAvg = document.getElementById('ovAvg');
+  for (const el of [ovFreq, ovNet, ovPct, ovAvg]) {
+    el.addEventListener('change', () => requestAnimationFrame(draw));
+  }
+
+  document.getElementById('resetView').addEventListener('click', () => {
+    view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+    requestAnimationFrame(draw);
+  });
+  function toggleLabel() {
+    scaleToggle.textContent = (mode === 'top' || mode === 'ldist' ? 'length: ' : 'score: ') + (useLog ? 'log' : 'linear');
+  }
+  scaleToggle.addEventListener('click', () => {
+    useLog = !useLog;
+    toggleLabel();
+    computeBase();
+    view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+    requestAnimationFrame(draw);
+  });
+
+  // view tabs
+  const tabTime = document.getElementById('tabTime');
+  const tabTop = document.getElementById('tabTop');
+  const tabDist = document.getElementById('tabDist');
+  const tabLdist = document.getElementById('tabLdist');
+  function setMode(m) {
+    if (mode === m) return;
+    mode = m;
+    tabTime.classList.toggle('active', m === 'time');
+    tabTop.classList.toggle('active', m === 'top');
+    tabDist.classList.toggle('active', m === 'dist');
+    tabLdist.classList.toggle('active', m === 'ldist');
+    document.body.classList.toggle('mode-top', m !== 'time');
+    toggleLabel();
+    hovered = null;
+    pinned = null;
+    showDetail(null, false);
+    computeBase();
+    view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+    requestAnimationFrame(draw);
+  }
+  tabTime.addEventListener('click', () => setMode('time'));
+  tabTop.addEventListener('click', () => setMode('top'));
+  tabDist.addEventListener('click', () => setMode('dist'));
+  tabLdist.addEventListener('click', () => setMode('ldist'));
+
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width; H = r.height;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    computeBase();
+    readColors();
+    draw();
+  }
+  window.addEventListener('resize', resize);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); draw(); });
+  resize();
+})();
+</script>
+</body>
+</html>
