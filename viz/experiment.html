@@ -28,6 +28,8 @@
   #panelHead span { color: #898781; font-weight: 400; }
   #panel.closed #panelBody { display: none; }
   #panelBody { display: grid; gap: 6px; }
+  #dofRows { display: grid; gap: 6px; }
+  #dofRows.off { display: none; }
   .prow { display: flex; align-items: center; gap: 8px; }
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
@@ -42,7 +44,7 @@
 <canvas id="labels"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
 <div id="panel">
-  <div id="panelHead">lighting <span id="panelArrow">▾</span></div>
+  <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
   <div id="panelBody">
     <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="55"></div>
     <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="14"></div>
@@ -50,6 +52,11 @@
     <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#9db4dd"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.55"></div>
     <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
     <div class="prow"><span>wall</span><input type="color" id="cWall" value="#eeeeee"></div>
+    <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
+    <div id="dofRows">
+      <div class="prow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="100"></div>
+      <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.03"></div>
+    </div>
   </div>
 </div>
 <script src="data.js"></script>
@@ -172,6 +179,8 @@
   uniform vec3 uSkyL;                // dome color * intensity (radiance)
   uniform vec3 uAlbW;                // wall albedo
   uniform vec3 uAlbS;                // sphere albedo
+  uniform float uDofK;               // aperture strength (0 = pinhole)
+  uniform float uFocusZ;             // camera-space depth of the focal plane
 
   uint pcg(inout uint s) {
     s = s * 747796405u + 2891336453u;
@@ -276,8 +285,19 @@
     // orthographic camera: jittered pixel -> camera plane -> world
     vec2 pix = gl_FragCoord.xy + vec2(rnd(seed), rnd(seed)) - 0.5;
     vec2 sc = (pix - 0.5 * uSize - uPan) / uZoom;
-    vec3 o = uCamToWorld * vec3(sc, 6000.0);
-    vec3 d = normalize(uCamToWorld * vec3(0.0, 0.0, -1.0));
+    vec3 oc = vec3(sc, 6000.0);
+    vec3 dc = vec3(0.0, 0.0, -1.0);
+    if (uDofK > 0.0) {
+      // telecentric thin lens: jitter across the aperture disk, keep the
+      // ray passing through this pixel's point on the focal plane, so blur
+      // grows linearly with distance from that plane
+      float r1 = rnd(seed), r2 = rnd(seed);
+      vec2 ap = sqrt(r1) * vec2(cos(6.2831853 * r2), sin(6.2831853 * r2));
+      oc = vec3(sc + ap * uDofK * (6000.0 - uFocusZ), 6000.0);
+      dc = normalize(vec3(-ap * uDofK, -1.0));
+    }
+    vec3 o = uCamToWorld * oc;
+    vec3 d = normalize(uCamToWorld * dc);
 
     vec3 L = vec3(0.0);
     vec3 tp = vec3(1.0);
@@ -365,16 +385,18 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall']) {
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cDofOn', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
+  const getV = el => el.type === 'checkbox' ? el.checked : el.value;
+  const setV = (el, v) => { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
   try {
     const saved = JSON.parse(localStorage.getItem('pt-light') || 'null');
-    if (saved) for (const id in ctl) if (saved[id] !== undefined) ctl[id].value = saved[id];
+    if (saved) for (const id in ctl) if (saved[id] !== undefined) setV(ctl[id], saved[id]);
   } catch (e) {}
   const saveLight = () => {
     const vals = {};
-    for (const id in ctl) vals[id] = ctl[id].value;
+    for (const id in ctl) vals[id] = getV(ctl[id]);
     localStorage.setItem('pt-light', JSON.stringify(vals));
   };
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
@@ -386,6 +408,9 @@
     light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
     light.albS = hex2lin(ctl.cSph.value);
     light.albW = hex2lin(ctl.cWall.value);
+    light.dofK = ctl.cDofOn.checked ? +ctl.cAper.value : 0;
+    light.focusZ = +ctl.cFocus.value;
+    document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
   }
   readLight();
 
@@ -421,6 +446,8 @@
     gl.uniform3fv(U('uSkyL'), light.skyL);
     gl.uniform3fv(U('uAlbW'), light.albW);
     gl.uniform3fv(U('uAlbS'), light.albS);
+    gl.uniform1f(U('uDofK'), light.dofK);
+    gl.uniform1f(U('uFocusZ'), light.focusZ);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
