@@ -1,4 +1,6 @@
-# RedditData
+# Reddit History Visualized
+
+**[View the live visualization](https://gregbahm.github.io/RedditData/)**
 
 A visualizer for my personal Reddit history (posts and comments with score data).
 
