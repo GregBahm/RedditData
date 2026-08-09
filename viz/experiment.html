@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Posts in 3D — experiment</title>
+<title>Posts in 3D</title>
 <style>
   * { margin: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
@@ -44,19 +44,19 @@
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
   <div id="panelBody">
-    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="55"></div>
-    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="14"></div>
-    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffb877"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="2.6"></div>
-    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#9db4dd"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="0.55"></div>
-    <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
-    <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#eeeeee"></div>
-    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#eeeeee"></div>
-    <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#898781"></div>
-    <div class="prow"><span>perspective</span><input type="checkbox" id="cPersp"></div>
+    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="41"></div>
+    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="58"></div>
+    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#f58e56"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="40"></div>
+    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#bdbdbd"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="4.9"></div>
+    <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#bd7070"></div>
+    <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#1c1c1c"></div>
+    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#171717"></div>
+    <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#f0f0f0"></div>
+    <div class="prow"><span>perspective</span><input type="checkbox" id="cPersp" checked></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
     <div id="dofRows">
-      <div class="prow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="100"></div>
-      <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.03"></div>
+      <div class="prow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="320"></div>
+      <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.004"></div>
     </div>
   </div>
 </div>
