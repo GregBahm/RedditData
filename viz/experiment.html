@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Posts in 3D — experiment</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: #f9f9f7; font-family: system-ui, sans-serif; }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #hint {
+    position: fixed; top: 10px; right: 14px;
+    font-size: 12px; color: #898781; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<script src="data.js"></script>
+<script>
+(() => {
+  // ---- data ----
+  const items = REDDIT_DATA.map(d => ({
+    score: +d.score,
+    time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
+  })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
+  items.sort((a, b) => a.time - b.time);
+  const N = items.length;
+  const symlog = s => Math.sign(s) * Math.log10(1 + Math.abs(s));
+  const t0 = items[0].time, t1 = items[N - 1].time;
+  const ys = items.map(d => symlog(d.score));
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+
+  // abstract layout space: x in [0..2000], y in [0..1000] (top = high score)
+  const px0 = new Float32Array(N), py0 = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    px0[i] = (items[i].time - t0) / (t1 - t0) * 2000;
+    py0[i] = (ymax - ys[i]) / (ymax - ymin) * 1000;
+  }
+
+  // ---- gl setup ----
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl2', { antialias: true });
+  const PS = 8; // sphere diameter in css px (constant under zoom)
+
+  const vsrc = `#version 300 es
+  in vec3 aData;            // base x, base y, stack index
+  uniform vec4 uView;       // kx, ky, tx, ty
+  uniform vec2 uSize;       // canvas size, css px
+  uniform vec2 uRot;        // yaw, pitch
+  uniform float uPS;
+  uniform float uDpr;
+  out float vStack;
+  void main() {
+    float sx = uView.z + uView.x * aData.x;
+    float sy = uView.w + uView.y * aData.y;
+    vec3 w = vec3(sx - uSize.x * 0.5, uSize.y * 0.5 - sy, aData.z * uPS);
+    float cy = cos(uRot.x), sy_ = sin(uRot.x);
+    float cx = cos(uRot.y), sx_ = sin(uRot.y);
+    w = vec3(cy * w.x + sy_ * w.z, w.y, -sy_ * w.x + cy * w.z);        // yaw
+    w = vec3(w.x, cx * w.y - sx_ * w.z, sx_ * w.y + cx * w.z);         // pitch
+    gl_Position = vec4(w.x / (uSize.x * 0.5), w.y / (uSize.y * 0.5), -w.z / 100000.0, 1.0);
+    gl_PointSize = uPS * uDpr;
+    vStack = aData.z;
+  }`;
+  const fsrc = `#version 300 es
+  precision mediump float;
+  in float vStack;
+  uniform vec3 uColor;
+  out vec4 o;
+  void main() {
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    float r2 = dot(p, p);
+    if (r2 > 1.0) discard;
+    vec3 n = vec3(p.x, -p.y, sqrt(1.0 - r2));
+    float diff = max(dot(n, normalize(vec3(-0.35, 0.5, 0.78))), 0.0);
+    vec3 col = uColor * (0.45 + 0.55 * diff);
+    col *= 1.0 - min(vStack * 0.0025, 0.35);   // deeper stacks slightly darker
+    o = vec4(col, 1.0);
+  }`;
+  const mk = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, vsrc));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  const U = name => gl.getUniformLocation(prog, name);
+
+  const attr = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    attr[i * 3] = px0[i];
+    attr[i * 3 + 1] = py0[i];
+  }
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, attr, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  gl.enable(gl.DEPTH_TEST);
+
+  // ---- view state ----
+  let W = 0, H = 0, dpr = 1;
+  let view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+  let yaw = 0, pitch = 0;
+
+  // stack overlapping spheres toward the viewer: bin screen positions into
+  // sphere-sized cells; each occupant of a cell gets the next depth slot.
+  // depends only on zoom (not pan), so it reruns on wheel, not on drag.
+  function restack() {
+    const cell = PS;
+    const bins = new Map();
+    for (let i = 0; i < N; i++) {
+      const ix = Math.round(view.kx * px0[i] / cell);
+      const iy = Math.round(view.ky * py0[i] / cell);
+      const key = ix * 1048576 + iy;
+      const n = bins.get(key) || 0;
+      attr[i * 3 + 2] = n;
+      bins.set(key, n + 1);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, attr, gl.DYNAMIC_DRAW);
+  }
+
+  function draw() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.976, 0.976, 0.968, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.uniform4f(U('uView'), view.kx, view.ky, view.tx, view.ty);
+    gl.uniform2f(U('uSize'), W, H);
+    gl.uniform2f(U('uRot'), yaw, pitch);
+    gl.uniform1f(U('uPS'), PS);
+    gl.uniform1f(U('uDpr'), dpr);
+    gl.uniform3f(U('uColor'), 0.55, 0.54, 0.52);
+    gl.drawArrays(gl.POINTS, 0, N);
+  }
+
+  // ---- interaction ----
+  let mode = null, lastX = 0, lastY = 0;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('pointerdown', e => {
+    mode = e.button === 2 ? 'rotate' : 'pan';
+    lastX = e.clientX; lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!mode) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    if (mode === 'pan') {
+      view.tx += dx; view.ty += dy;
+    } else {
+      yaw += dx * 0.008;
+      pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
+    }
+    requestAnimationFrame(draw);
+  });
+  canvas.addEventListener('pointerup', () => { mode = null; });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const f = Math.pow(1.0015, -e.deltaY);
+    view.kx *= f; view.ky *= f;
+    view.tx = e.clientX - (e.clientX - view.tx) * f;
+    view.ty = e.clientY - (e.clientY - view.ty) * f;
+    restack();
+    requestAnimationFrame(draw);
+  }, { passive: false });
+
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    draw();
+  }
+  window.addEventListener('resize', resize);
+
+  // initial fit: layout space into the window with a margin
+  W = window.innerWidth; H = window.innerHeight;
+  view.kx = (W - 80) / 2000;
+  view.ky = (H - 80) / 1000;
+  view.tx = 40; view.ty = 40;
+  restack();
+  resize();
+})();
+</script>
+</body>
+</html>
