@@ -187,8 +187,8 @@
 <header>
   <h1>Reddit posting history</h1>
   <nav class="tabs">
-    <button class="tab active" id="tabTime">Timeline</button>
-    <button class="tab" id="tabTop">Top comments</button>
+    <button class="tab active" id="tabTime">Posts by Score</button>
+    <button class="tab" id="tabLen">Posts by Length</button>
     <button class="tab" id="tabDist">Score distribution</button>
     <button class="tab" id="tabLdist">Length distribution</button>
   </nav>
@@ -269,12 +269,6 @@
     `${new Date(t0).getFullYear()}–${new Date(t1).getFullYear()} · ` +
     `scores ${sMin.toLocaleString()} to ${sMax.toLocaleString()}`;
 
-  // top comments by score, for the "Top comments" view
-  const topItems = items.filter(d => d.type === 'comment')
-    .sort((a, b) => b.score - a.score || a.time - b.time)
-    .slice(0, 1000);
-  topItems.forEach((d, i) => { d.rank = i + 1; });
-
   // every item ranked by score, for the "Score distribution" view
   const distItems = items.slice().sort((a, b) => b.score - a.score || a.time - b.time);
   distItems.forEach((d, i) => { d.drank = i + 1; });
@@ -284,14 +278,14 @@
   lenItems.forEach((d, i) => { d.lrank = i + 1; });
 
   // ---- scales / view modes ----
-  // 'time': x = time, y = score. 'top': x = rank among top comments, y = comment length.
-  // 'dist': x = rank among all items, y = score.
+  // 'time': x = time, y = score. 'ltime': x = time, y = post length.
+  // 'dist': x = rank among all items, y = score. 'ldist': x = rank by length, y = length.
   let mode = 'time';
   let useLog = true;
   const symlog = s => Math.sign(s) * Math.log10(1 + Math.abs(s));
-  const activeList = () => mode === 'time' ? items : mode === 'top' ? topItems : mode === 'dist' ? distItems : lenItems;
-  const xv = d => mode === 'time' ? d.time : mode === 'top' ? d.rank : mode === 'dist' ? d.drank : d.lrank;
-  const yvRaw = d => (mode === 'top' || mode === 'ldist') ? d.len : d.score;
+  const activeList = () => mode === 'dist' ? distItems : mode === 'ldist' ? lenItems : items;
+  const xv = d => mode === 'dist' ? d.drank : mode === 'ldist' ? d.lrank : d.time;
+  const yvRaw = d => (mode === 'ltime' || mode === 'ldist') ? d.len : d.score;
   const yv = d => useLog ? symlog(yvRaw(d)) : yvRaw(d);
 
   const M = { left: 56, right: 24, top: 28, bottom: 40 };
@@ -302,10 +296,9 @@
   function computeBase() {
     const ys = activeList().map(yv);
     let ymin = Math.min(...ys), ymax = Math.max(...ys);
-    if (mode === 'top') ymin = 0; // bars grow from the zero baseline
     const pad = (ymax - ymin) * 0.04 || 1;
     by = { min: ymin - pad, max: ymax + pad };
-    if (mode === 'time') {
+    if (mode === 'time' || mode === 'ltime') {
       const tpad = (t1 - t0) * 0.02 || 1;
       bx = { min: t0 - tpad, max: t1 + tpad };
     } else {
@@ -366,7 +359,7 @@
 
   function xTicks() {
     const lo = xInv(M.left), hi = xInv(W - M.right);
-    if (mode !== 'time') {
+    if (mode === 'dist' || mode === 'ldist') {
       const n = activeList().length;
       const span = hi - lo;
       const step = Math.pow(10, Math.floor(Math.log10(span / 8)));
@@ -460,11 +453,11 @@
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(mode === 'time' ? 'time →' : mode === 'ldist' ? 'rank by length →' : 'rank by score →', M.left + plotW() / 2, H - 8);
+    ctx.fillText(mode === 'dist' ? 'rank by score →' : mode === 'ldist' ? 'rank by length →' : 'time →', M.left + plotW() / 2, H - 8);
     ctx.save();
     ctx.translate(14, M.top + plotH() / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText((mode === 'top' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
+    ctx.fillText((mode === 'ltime' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
     ctx.restore();
 
     // clip to plot area for dots
@@ -487,24 +480,13 @@
       }
       ctx.stroke();
     } else {
-    // pass 1: ordinary marks (timeline dots / top-comments bars); pass 2: records on top
-    ctx.globalAlpha = mode === 'top' ? 0.85 : 0.55;
+    // pass 1: ordinary dots; in score mode the records are drawn on top in pass 2
+    ctx.globalAlpha = 0.55;
     ctx.fillStyle = C.dot;
-    const slot = mode === 'top' ? xPix(2) - xPix(1) : 0;
-    const barW = mode === 'top' ? Math.max(1, Math.min(slot - 2, 24)) : 0;
-    const yZero = yPix(0);
     for (const d of activeList()) {
       const px = xPix(xv(d)), py = yPix(yv(d));
       d.px = px; d.py = py;
-      if (mode === 'top') {
-        if (px < M.left - barW || px > W - M.right + barW) continue;
-        const r = Math.min(4, barW / 2);
-        ctx.beginPath();
-        ctx.roundRect(px - barW / 2, Math.min(py, yZero), barW, Math.abs(yZero - py), [r, r, 0, 0]);
-        ctx.fill();
-        continue;
-      }
-      if (d.recordHigh || d.recordLow) continue;
+      if (mode === 'time' && (d.recordHigh || d.recordLow)) continue;
       if (px < M.left - 6 || px > W - M.right + 6 || py < M.top - 6 || py > H - M.bottom + 6) continue;
       if (d.type === 'post') {
         ctx.fillRect(px - 3, py - 3, 6, 6);
@@ -571,14 +553,8 @@
       if (!d) continue;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      if (mode === 'top') {
-        ctx.strokeStyle = C.muted;
-        const r = Math.min(4, barW / 2);
-        ctx.roundRect(d.px - barW / 2 - 2, Math.min(d.py, yZero) - 2, barW + 4, Math.abs(yZero - d.py) + 2, [r, r, 0, 0]);
-      } else {
-        ctx.strokeStyle = d.recordLow && !d.recordHigh ? C.low : d.recordHigh ? C.high : C.muted;
-        ctx.arc(d.px, d.py, 8, 0, 6.2832);
-      }
+      ctx.strokeStyle = d.recordLow && !d.recordHigh ? C.low : d.recordHigh ? C.high : C.muted;
+      ctx.arc(d.px, d.py, 8, 0, 6.2832);
       ctx.stroke();
     }
     ctx.restore();
@@ -603,10 +579,7 @@
     meta.append(el('span', 'k', new Date(d.time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })));
     meta.append(el('span', 'k', 'r/' + d.sub));
     meta.append(el('span', 'k', d.type));
-    if (mode === 'top') {
-      meta.append(el('span', 'k', 'rank #' + d.rank));
-      meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
-    } else if (mode === 'dist') {
+    if (mode === 'dist') {
       meta.append(el('span', 'k', 'rank #' + d.drank.toLocaleString() + ' of ' + distItems.length.toLocaleString()));
       if (d.recordHigh) meta.append(el('span', 'badge high', 'record high'));
       if (d.recordLow) meta.append(el('span', 'badge low', 'record low'));
@@ -614,6 +587,7 @@
       meta.append(el('span', 'k', 'rank #' + d.lrank.toLocaleString() + ' of ' + lenItems.length.toLocaleString()));
       meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
     } else {
+      if (mode === 'ltime') meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
       if (d.recordHigh) meta.append(el('span', 'badge high', 'record high'));
       if (d.recordLow) meta.append(el('span', 'badge low', 'record low'));
     }
@@ -642,20 +616,6 @@
         if (d.px < M.left || d.px > W - M.right) continue;
         const dx = Math.abs(mx - d.px);
         if (dx < bestDx) { bestDx = dx; best = d; }
-      }
-      return best;
-    }
-    if (mode === 'top') {
-      // bars: distance to the bar's rectangle (center line to top, down to the baseline)
-      const halfW = Math.max(1, Math.min(xPix(2) - xPix(1) - 2, 24)) / 2;
-      const yZero = yPix(0);
-      for (const d of topItems) {
-        if (d.px < M.left || d.px > W - M.right) continue;
-        const dx = Math.max(0, Math.abs(mx - d.px) - halfW);
-        const top = Math.min(d.py, yZero), bot = Math.max(d.py, yZero);
-        const dy = my < top ? top - my : my > bot ? my - bot : 0;
-        const dist = dx * dx + dy * dy;
-        if (dist < bestD) { bestD = dist; best = d; }
       }
       return best;
     }
@@ -753,7 +713,7 @@
     requestAnimationFrame(draw);
   });
   function toggleLabel() {
-    scaleToggle.textContent = (mode === 'top' || mode === 'ldist' ? 'length: ' : 'score: ') + (useLog ? 'log' : 'linear');
+    scaleToggle.textContent = (mode === 'ltime' || mode === 'ldist' ? 'length: ' : 'score: ') + (useLog ? 'log' : 'linear');
   }
   scaleToggle.addEventListener('click', () => {
     useLog = !useLog;
@@ -765,14 +725,14 @@
 
   // view tabs
   const tabTime = document.getElementById('tabTime');
-  const tabTop = document.getElementById('tabTop');
+  const tabLen = document.getElementById('tabLen');
   const tabDist = document.getElementById('tabDist');
   const tabLdist = document.getElementById('tabLdist');
   function setMode(m) {
     if (mode === m) return;
     mode = m;
     tabTime.classList.toggle('active', m === 'time');
-    tabTop.classList.toggle('active', m === 'top');
+    tabLen.classList.toggle('active', m === 'ltime');
     tabDist.classList.toggle('active', m === 'dist');
     tabLdist.classList.toggle('active', m === 'ldist');
     document.body.classList.toggle('mode-top', m !== 'time');
@@ -785,7 +745,7 @@
     requestAnimationFrame(draw);
   }
   tabTime.addEventListener('click', () => setMode('time'));
-  tabTop.addEventListener('click', () => setMode('top'));
+  tabLen.addEventListener('click', () => setMode('ltime'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
 
