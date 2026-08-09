@@ -66,6 +66,7 @@
   // ---- data ----
   const items = REDDIT_DATA.map(d => ({
     score: +d.score,
+    post: d.type === 'post',
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
   })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
   items.sort((a, b) => a.time - b.time);
@@ -143,6 +144,7 @@
   const posData = new Float32Array(POS_W * POS_H * 4);
   for (let i = 0; i < N; i++) {
     posData[i * 4] = px[i]; posData[i * 4 + 1] = py[i]; posData[i * 4 + 2] = pz[i];
+    posData[i * 4 + 3] = items[i].post ? 1 : 0;   // posts render as cubes
   }
 
   // ---- gl ----
@@ -201,7 +203,8 @@
   }
   float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
 
-  vec3 spherePos(int i) { return texelFetch(uPos, ivec2(i % ${POS_W}, i / ${POS_W}), 0).xyz; }
+  vec4 itemData(int i) { return texelFetch(uPos, ivec2(i % ${POS_W}, i / ${POS_W}), 0); }
+  vec3 spherePos(int i) { return itemData(i).xyz; }
   uint idxAt(int i) { return texelFetch(uIdx, ivec2(i % ${IDX_W}, i / ${IDX_W}), 0).r; }
 
   float iSphere(vec3 o, vec3 d, vec3 c) {
@@ -210,6 +213,17 @@
     float h = b * b - (dot(oc, oc) - R * R);
     if (h < 0.0) return -1.0;
     return -b - sqrt(h);
+  }
+
+  float iBox(vec3 o, vec3 d, vec3 c) {
+    vec3 m = 1.0 / d;
+    vec3 t1 = (c - vec3(R) - o) * m;
+    vec3 t2 = (c + vec3(R) - o) * m;
+    vec3 tn3 = min(t1, t2), tf3 = max(t1, t2);
+    float tn = max(max(tn3.x, tn3.y), tn3.z);
+    float tf = min(min(tf3.x, tf3.y), tf3.z);
+    if (tn > tf || tf < 0.0) return -1.0;
+    return tn;
   }
 
   // returns t in x, id in y (as float: -2 miss, -1 wall, >=0 sphere)
@@ -252,10 +266,10 @@
         uvec2 oc = texelFetch(uGrid, c, 0).xy;
         for (uint k = 0u; k < oc.y; k++) {
           int id = int(idxAt(int(oc.x + k)));
-          vec3 sc2 = spherePos(id);
-          if (sc2.z > zHi) continue;
-          if (sc2.z < zLo) break;
-          float t = iSphere(o, d, sc2);
+          vec4 s4 = itemData(id);
+          if (s4.z > zHi) continue;
+          if (s4.z < zLo) break;
+          float t = s4.w > 0.5 ? iBox(o, d, s4.xyz) : iSphere(o, d, s4.xyz);
           if (t > 1e-3 && t < bestT) { bestT = t; bestId = float(id); }
         }
         if (bestT <= tExitCell || tExitCell > tLimit) break;
@@ -333,7 +347,22 @@
       vec2 h = trace(o, d);
       if (h.y < -1.5) { L += tp * uSkyL; break; }
       vec3 p = o + d * h.x;
-      vec3 n = h.y < -0.5 ? vec3(0.0, 0.0, 1.0) : normalize(p - spherePos(int(h.y)));
+      vec3 n;
+      if (h.y < -0.5) {
+        n = vec3(0.0, 0.0, 1.0);
+      } else {
+        vec4 s4 = itemData(int(h.y));
+        if (s4.w > 0.5) {
+          // cube: normal is the dominant axis of the local hit point
+          vec3 lp = p - s4.xyz;
+          vec3 al = abs(lp);
+          n = al.x > al.y && al.x > al.z ? vec3(sign(lp.x), 0.0, 0.0)
+            : al.y > al.z ? vec3(0.0, sign(lp.y), 0.0)
+            : vec3(0.0, 0.0, sign(lp.z));
+        } else {
+          n = normalize(p - s4.xyz);
+        }
+      }
       vec3 alb;
       if (h.y < -0.5) {
         bool inRect = p.x >= uRect.x && p.y >= uRect.y && p.x <= uRect.z && p.y <= uRect.w;
