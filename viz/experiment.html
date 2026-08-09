@@ -61,11 +61,30 @@
   #pick .note { font-size: 12px; opacity: 0.65; margin-top: 6px; }
   #pick a { color: #2a78d6; text-decoration: none; }
   #pick a:hover { text-decoration: underline; }
+  #recBar {
+    position: fixed; top: 10px; left: 14px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; color: #898781;
+    z-index: 6;
+  }
+  #recBtn {
+    font: inherit;
+    color: #52514e;
+    background: rgba(252, 252, 251, 0.92);
+    border: 1px solid rgba(11, 11, 11, 0.15);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  #recBtn.on { color: #c33; font-weight: 600; }
+  #recInfo { background: rgba(252, 252, 251, 0.85); border-radius: 6px; padding: 3px 8px; }
+  #recInfo:empty { display: none; }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<div id="recBar"><button id="recBtn">⏺ record</button><span id="recInfo"></span></div>
 <div id="pick"></div>
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
@@ -488,6 +507,18 @@
   let pan = { x: 0, y: 0 }, zoom = 1, yaw = 0, pitch = 0;
   let hoverId = -1, pinId = -1, lastMx = -1, lastMy = -1;
   let frame = 0;
+  let ovState = null;          // replay override for offline rendering
+  let recording = null;        // snapshot array while recording
+  let exporting = false;
+  function resolveDof() {
+    let k = light.dofK, f = light.focusZ;
+    if (light.postMode) {
+      const shown = hoverId >= 0 ? hoverId : pinId;
+      if (shown >= 0) f = camZ(shown);
+      else k = 0;
+    }
+    return { k, f };
+  }
   const MAX_SPP = 1500;
   const hint = document.getElementById('hint');
 
@@ -568,17 +599,12 @@
     gl.uniform3fv(U('uAlbS'), light.albS);
     gl.uniform4f(U('uRect'), wxOf(0), wyOf(1000), wxOf(2000), wyOf(0));
     // post mode: DoF only while an item is shown, focused on it under the hood
-    let dofK = light.dofK, focusZ = light.focusZ;
-    if (light.postMode) {
-      const shown = hoverId >= 0 ? hoverId : pinId;
-      if (shown >= 0) focusZ = camZ(shown);
-      else dofK = 0;
-    }
-    gl.uniform1f(U('uDofK'), dofK);
-    gl.uniform1f(U('uFocusZ'), focusZ);
+    const dof = ovState ? { k: ovState.dofK, f: ovState.focusZ } : resolveDof();
+    gl.uniform1f(U('uDofK'), dof.k);
+    gl.uniform1f(U('uFocusZ'), dof.f);
     gl.uniform1f(U('uEyeZ'), light.persp ? EYE_D : 0);
-    gl.uniform1f(U('uHiA'), hoverId);
-    gl.uniform1f(U('uHiB'), pinId);
+    gl.uniform1f(U('uHiA'), ovState ? ovState.hoverId : hoverId);
+    gl.uniform1f(U('uHiB'), ovState ? ovState.pinId : pinId);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
@@ -594,7 +620,17 @@
   }
 
   function loop() {
-    if (frame < MAX_SPP) {
+    if (recording) {
+      const dof = resolveDof();
+      recording.push({
+        t: performance.now(),
+        px: pan.x, py: pan.y, zoom, yaw, pitch,
+        hoverId, pinId, mx: lastMx, my: lastMy,
+        dofK: dof.k, focusZ: dof.f,
+      });
+      recBtn.textContent = '⏹ stop · ' + fmtTime((performance.now() - recording[0].t) / 1000);
+    }
+    if (!exporting && frame < MAX_SPP) {
       renderSample();
       if (frame % 10 === 0 || frame < 10) {
         hint.textContent = `path tracing · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
@@ -602,8 +638,13 @@
     }
     requestAnimationFrame(loop);
   }
+  const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-  const reset = () => { frame = 0; updatePick(lastMx, lastMy); };
+  const reset = () => {
+    if (exporting) return;
+    frame = 0;
+    updatePick(lastMx, lastMy);
+  };
   for (const id in ctl) {
     ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
   }
@@ -792,11 +833,13 @@
   let mode = null, lastX = 0, lastY = 0, downX = 0, downY = 0;
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
+    if (exporting) return;
     mode = e.button === 2 ? 'rotate' : 'pan';
     downX = lastX = e.clientX; downY = lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
+    if (exporting) return;
     lastMx = e.clientX; lastMy = e.clientY;
     if (mode) {
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -819,6 +862,7 @@
     }
   });
   canvas.addEventListener('pointerup', e => {
+    if (exporting) return;
     const wasPan = mode === 'pan';
     mode = null;
     if (wasPan && Math.hypot(e.clientX - downX, e.clientY - downY) < 5) {
@@ -828,6 +872,7 @@
   });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
+    if (exporting) return;
     const f = Math.pow(1.0015, -e.deltaY);
     const cx = e.clientX - W / 2, cy = H / 2 - e.clientY;
     zoom *= f;
@@ -835,6 +880,155 @@
     pan.y = cy - (cy - pan.y) * f;
     reset();
   }, { passive: false });
+
+  // ---- recording: capture manipulations, then replay offline at high
+  // quality into a numbered PNG sequence for video editing ----
+  const recBtn = document.getElementById('recBtn');
+  const recInfo = document.getElementById('recInfo');
+  let cancelExport = false;
+  recBtn.addEventListener('click', async () => {
+    if (exporting) { cancelExport = true; return; }
+    if (!recording) {
+      if (!window.showDirectoryPicker) {
+        recInfo.textContent = 'folder access is not supported in this browser';
+        return;
+      }
+      recording = [];
+      recBtn.classList.add('on');
+      recBtn.textContent = '⏹ stop · 0:00';
+      recInfo.textContent = '';
+      return;
+    }
+    const rec = recording;
+    recording = null;
+    recBtn.classList.remove('on');
+    recBtn.textContent = '⏺ record';
+    if (rec.length < 2) return;
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (e) { recInfo.textContent = 'export cancelled'; return; }
+    exportFrames(rec, dir);
+  });
+
+  function drawPanelInto(g, s) {
+    const show = s.pinId >= 0 ? s.pinId : s.hoverId;
+    if (show < 0) return;
+    const d = items[show].src;
+    const maxW = 380, padX = 12, padY = 10, lh = 18;
+    const lines = [];
+    const push = (text, font, alpha) => lines.push({ text, font, alpha });
+    push((+d.score).toLocaleString() + (Math.abs(+d.score) === 1 ? ' point' : ' points'),
+      '600 15px system-ui, sans-serif', 1);
+    push(new Date(items[show].time).toLocaleDateString(undefined, { dateStyle: 'medium' }) +
+      ' · r/' + d.sub + ' · ' + d.type, '13px system-ui, sans-serif', 0.8);
+    const wrap = (text, font, alpha, maxLines) => {
+      g.font = font;
+      const words = String(text).replace(/\s+/g, ' ').split(' ');
+      let line = '', count = 0;
+      for (const w2 of words) {
+        const t2 = line ? line + ' ' + w2 : w2;
+        if (g.measureText(t2).width > maxW - padX * 2 && line) {
+          push(line, font, alpha);
+          if (++count >= maxLines - 1) { line = w2 + '…'; break; }
+          line = w2;
+        } else line = t2;
+      }
+      if (line) push(line, font, alpha);
+    };
+    if (d.title) wrap(d.title, '600 13px system-ui, sans-serif', 1, 3);
+    if (d.thread) wrap('in: ' + d.thread, '600 13px system-ui, sans-serif', 0.8, 2);
+    wrap(d.body || (d.type === 'post' ? '(link post — no text)' : '(no text)'),
+      '13px system-ui, sans-serif', 0.8, 6);
+    let wMax = 0;
+    for (const l of lines) { g.font = l.font; wMax = Math.max(wMax, g.measureText(l.text).width); }
+    const pw = Math.min(maxW, wMax + padX * 2);
+    const ph = lines.length * lh + padY * 2;
+    let ax, ay;
+    if (s.pinId >= 0) {
+      const a2 = itemAnchor(s.pinId);
+      ax = a2.x; ay = a2.y - R * zoom - 8;
+    } else {
+      ax = s.mx; ay = s.my - 14;
+    }
+    const rx = ax - pw / 2, ry = Math.max(10, ay - ph);
+    g.globalAlpha = 1;
+    g.fillStyle = ctl.cPickBg.value;
+    g.strokeStyle = 'rgba(128, 128, 128, 0.4)';
+    g.beginPath();
+    g.roundRect(rx, ry, pw, ph, 8);
+    g.fill();
+    g.stroke();
+    g.fillStyle = ctl.cPickTx.value;
+    g.textBaseline = 'alphabetic';
+    g.textAlign = 'left';
+    lines.forEach((l, i2) => {
+      g.font = l.font;
+      g.globalAlpha = l.alpha;
+      g.fillText(l.text, rx + padX, ry + padY + lh * (i2 + 0.75));
+    });
+    g.globalAlpha = 1;
+  }
+
+  async function exportFrames(rec, dir) {
+    exporting = true;
+    cancelExport = false;
+    recBtn.textContent = '✕ cancel';
+    const saved = { px: pan.x, py: pan.y, zoom, yaw, pitch };
+    pickPanel.style.display = 'none';
+    const SPP = 300, FPS = 60;
+    const t0r = rec[0].t;
+    const total = Math.max(1, Math.round((rec[rec.length - 1].t - t0r) / 1000 * FPS));
+    const ec = document.createElement('canvas');
+    ec.width = W; ec.height = H;
+    const ectx = ec.getContext('2d');
+    // rAF with a timeout fallback so export keeps crawling forward even
+    // if the window is briefly covered (rAF pauses in hidden windows)
+    const raf = () => new Promise(r => { requestAnimationFrame(() => r()); setTimeout(r, 250); });
+    const tStart = performance.now();
+    let ptr = 0, fi = 0;
+    for (; fi < total && !cancelExport; fi++) {
+      const ft = t0r + fi * 1000 / FPS;
+      while (ptr < rec.length - 2 && rec[ptr + 1].t <= ft) ptr++;
+      const s0 = rec[ptr], s1 = rec[Math.min(ptr + 1, rec.length - 1)];
+      const u = s1.t > s0.t ? Math.min(1, Math.max(0, (ft - s0.t) / (s1.t - s0.t))) : 0;
+      const L = (a, b) => a + (b - a) * u;
+      pan.x = L(s0.px, s1.px); pan.y = L(s0.py, s1.py);
+      zoom = L(s0.zoom, s1.zoom);
+      yaw = L(s0.yaw, s1.yaw);
+      pitch = L(s0.pitch, s1.pitch);
+      ovState = {
+        hoverId: s0.hoverId, pinId: s0.pinId, mx: s0.mx, my: s0.my,
+        dofK: L(s0.dofK, s1.dofK), focusZ: L(s0.focusZ, s1.focusZ),
+      };
+      frame = 0;
+      let done = 0;
+      while (done < SPP && !cancelExport) {
+        const n = Math.min(60, SPP - done);
+        for (let k = 0; k < n; k++) renderSample();
+        done += n;
+        await raf();
+      }
+      if (cancelExport) break;
+      renderSample();               // fresh backbuffer in this task
+      ectx.drawImage(canvas, 0, 0);
+      drawPanelInto(ectx, ovState);
+      const blob = await new Promise(r => ec.toBlob(r, 'image/png'));
+      const fh = await dir.getFileHandle('frame_' + String(fi + 1).padStart(4, '0') + '.png', { create: true });
+      const wr = await fh.createWritable();
+      await wr.write(blob);
+      await wr.close();
+      const el = (performance.now() - tStart) / 1000;
+      recInfo.textContent = `rendering ${fi + 1}/${total} · eta ${fmtTime(el / (fi + 1) * (total - fi - 1))} · keep window visible`;
+    }
+    ovState = null;
+    pan.x = saved.px; pan.y = saved.py;
+    zoom = saved.zoom; yaw = saved.yaw; pitch = saved.pitch;
+    exporting = false;
+    recBtn.textContent = '⏺ record';
+    recInfo.textContent = cancelExport ? `cancelled · ${fi} frames written` : `done · ${total} frames · ${FPS} fps`;
+    frame = 0;
+  }
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
@@ -849,7 +1043,7 @@
   // debug hook
   let topIdx = 0;
   for (let i = 0; i < N; i++) if (items[i].score > items[topIdx].score) topIdx = i;
-  window.__pt = { sample: renderSample, spp: () => frame, gl, anchorOf: itemAnchor, topIdx };
+  window.__pt = { sample: renderSample, spp: () => frame, gl, anchorOf: itemAnchor, topIdx, exportFrames };
 })();
 </script>
 </body>
