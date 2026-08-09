@@ -51,7 +51,8 @@
     <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffb877"><input type="range" id="cSunI" min="0" max="4" step="0.05" value="2.6"></div>
     <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#9db4dd"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.55"></div>
     <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
-    <div class="prow"><span>wall</span><input type="color" id="cWall" value="#eeeeee"></div>
+    <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#eeeeee"></div>
+    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#eeeeee"></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
     <div id="dofRows">
       <div class="prow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="100"></div>
@@ -177,8 +178,10 @@
   uniform vec3 uSunDir;              // toward the sun
   uniform vec3 uSunE;                // sun color * intensity (irradiance)
   uniform vec3 uSkyL;                // dome color * intensity (radiance)
-  uniform vec3 uAlbW;                // wall albedo
+  uniform vec3 uAlbW;                // canvas-rectangle albedo
+  uniform vec3 uAlbB;                // wall albedo outside the rectangle
   uniform vec3 uAlbS;                // sphere albedo
+  uniform vec4 uRect;                // canvas rectangle: min x, min y, max x, max y
   uniform float uDofK;               // aperture strength (0 = pinhole)
   uniform float uFocusZ;             // camera-space depth of the focal plane
 
@@ -306,7 +309,14 @@
       if (h.y < -1.5) { L += tp * uSkyL; break; }
       vec3 p = o + d * h.x;
       vec3 n = h.y < -0.5 ? vec3(0.0, 0.0, 1.0) : normalize(p - spherePos(int(h.y)));
-      tp *= h.y < -0.5 ? uAlbW : uAlbS;
+      vec3 alb;
+      if (h.y < -0.5) {
+        bool inRect = p.x >= uRect.x && p.y >= uRect.y && p.x <= uRect.z && p.y <= uRect.w;
+        alb = inRect ? uAlbW : uAlbB;
+      } else {
+        alb = uAlbS;
+      }
+      tp *= alb;
       vec3 sd = coneDir(uSunDir, seed);
       float ndl = dot(n, sd);
       if (ndl > 0.0 && !occluded(p + n * 0.02, sd)) {
@@ -385,7 +395,7 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cDofOn', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cDofOn', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -408,6 +418,7 @@
     light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
     light.albS = hex2lin(ctl.cSph.value);
     light.albW = hex2lin(ctl.cWall.value);
+    light.albB = hex2lin(ctl.cBack.value);
     light.dofK = ctl.cDofOn.checked ? +ctl.cAper.value : 0;
     light.focusZ = +ctl.cFocus.value;
     document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
@@ -445,7 +456,9 @@
     gl.uniform3fv(U('uSunE'), light.sunE);
     gl.uniform3fv(U('uSkyL'), light.skyL);
     gl.uniform3fv(U('uAlbW'), light.albW);
+    gl.uniform3fv(U('uAlbB'), light.albB);
     gl.uniform3fv(U('uAlbS'), light.albS);
+    gl.uniform4f(U('uRect'), wxOf(0), wyOf(1000), wxOf(2000), wyOf(0));
     gl.uniform1f(U('uDofK'), light.dofK);
     gl.uniform1f(U('uFocusZ'), light.focusZ);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -514,11 +527,11 @@
     const d = cp * zoom;
     const e = W / 2 + pan.x, f = H / 2 - pan.y;
     lctx.setTransform(dpr2 * a, dpr2 * b, 0, dpr2 * d, dpr2 * e, dpr2 * f);
-    lctx.font = '11px system-ui, sans-serif';   // world units: scales with zoom
+    lctx.font = '17px system-ui, sans-serif';   // world units: scales with zoom
     lctx.textBaseline = 'middle';
     lctx.fillStyle = '#898781';
     lctx.strokeStyle = 'rgba(252, 252, 251, 0.75)';
-    lctx.lineWidth = 3;
+    lctx.lineWidth = 4;
     const xL = wxOf(0), yB = wyOf(1000);
     // score ticks along the left edge of the wall
     for (const v of [10000, 1000, 100, 10, 1, 0, -1, -10, -100]) {
