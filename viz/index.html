@@ -101,6 +101,18 @@
   .radios { font-size: 13px; align-self: center; }
   .radios label { color: var(--text-primary); }
   #legendOv { font-size: 13px; align-self: center; }
+  #smoothRow {
+    display: none;
+    align-items: center;
+    align-self: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  #smoothRow.visible { display: flex; }
+  .mode-top #smoothRow { display: none; }
+  #smoothRow input[type=range] { width: 160px; accent-color: var(--accent); margin: 0; }
+  #smoothVal { min-width: 52px; }
   .key { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
   button.toggle {
     font: inherit;
@@ -191,11 +203,15 @@
     </div>
     <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
     <div class="legend" id="legendOv">
-      <label><input type="checkbox" id="ovFreq"><span class="key" style="background:var(--ov-freq)"></span>posts/week</label>
-      <label><input type="checkbox" id="ovText"><span class="key" style="background:var(--ov-text)"></span>text/week</label>
-      <label><input type="checkbox" id="ovNet"><span class="key" style="background:var(--ov-net)"></span>net score/week</label>
-      <label><input type="checkbox" id="ovPct"><span class="key" style="background:var(--ov-pct)"></span>% positive/week</label>
-      <label><input type="checkbox" id="ovAvg"><span class="key" style="background:var(--ov-avg)"></span>avg score/week</label>
+      <label><input type="checkbox" id="ovFreq"><span class="key" style="background:var(--ov-freq)"></span>posts</label>
+      <label><input type="checkbox" id="ovText"><span class="key" style="background:var(--ov-text)"></span>text</label>
+      <label><input type="checkbox" id="ovNet"><span class="key" style="background:var(--ov-net)"></span>net score</label>
+      <label><input type="checkbox" id="ovPct"><span class="key" style="background:var(--ov-pct)"></span>% positive</label>
+      <label><input type="checkbox" id="ovAvg"><span class="key" style="background:var(--ov-avg)"></span>avg score</label>
+    </div>
+    <div id="smoothRow">
+      <input type="range" id="smoothSlider" min="0" max="100" value="54" title="Smoothing">
+      <span id="smoothVal">~30 wk</span>
     </div>
     <div class="controls">
       <nav class="tabs">
@@ -229,6 +245,15 @@
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
   })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
   items.sort((a, b) => a.time - b.time);
+
+  // drop the final, incomplete week (the export ends mid-week, which would
+  // show up as a bogus dip in the weekly overlays)
+  {
+    const d = new Date(items[items.length - 1].time);
+    const day = (d.getUTCDay() + 6) % 7;
+    const cut = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
+    while (items.length && items[items.length - 1].time >= cut) items.pop();
+  }
 
   const t0 = items[0].time, t1 = items[items.length - 1].time;
 
@@ -388,35 +413,26 @@
   }
 
   let hovered = null, pinned = null;
+  let overlayPts = [];    // per drawn overlay: {pts:[{x,y,v}], fmt, color}
+  let overlayHover = null; // {x, y, text, color}
 
   function draw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
-    // gridlines + axis labels
+    // axis tick labels
     ctx.font = '11px system-ui, sans-serif';
     ctx.lineWidth = 1;
-    ctx.strokeStyle = C.grid;
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     for (const t of xTicks()) {
-      const px = Math.round(xPix(t.v)) + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(px, M.top);
-      ctx.lineTo(px, H - M.bottom);
-      ctx.stroke();
-      ctx.fillText(t.label, px, H - M.bottom + 8);
+      ctx.fillText(t.label, Math.round(xPix(t.v)) + 0.5, H - M.bottom + 8);
     }
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (const t of yTicks()) {
-      const py = Math.round(yPix(t.v)) + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(M.left, py);
-      ctx.lineTo(W - M.right, py);
-      ctx.stroke();
-      ctx.fillText(t.label, M.left - 8, py);
+      ctx.fillText(t.label, M.left - 8, Math.round(yPix(t.v)) + 0.5);
     }
     // zero line for score, slightly stronger
     const zy = Math.round(yPix(0)) + 0.5;
@@ -479,19 +495,28 @@
     if (mode === 'time' || mode === 'ltime') {
     // overlay lines: weekly aggregates on the same (shared) y axis
     const sv = useLog ? symlog : (v => v);
+    const fmtNum = v => {
+      const a = Math.abs(v);
+      if (a >= 10000) return (v / 1000).toFixed(a >= 100000 ? 0 : 1) + 'k';
+      if (a >= 100) return String(Math.round(v));
+      if (a >= 10) return String(Math.round(v * 10) / 10);
+      return String(Math.round(v * 100) / 100);
+    };
     const series = [];
-    if (ovFreq.checked) series.push({ color: C.ovFreq, vals: weeks.map(w => w.count) });
-    if (ovText.checked) series.push({ color: C.ovText, vals: weeks.map(w => w.text) });
-    if (ovNet.checked) series.push({ color: C.ovNet, vals: weeks.map(w => w.net) });
-    if (ovPct.checked) series.push({ color: C.ovPct, vals: weeks.map(w => w.count ? w.pos / w.count * 100 : null) });
-    if (ovAvg.checked) series.push({ color: C.ovAvg, vals: weeks.map(w => w.count ? w.net / w.count : null) });
-    ctx.lineWidth = 2;
+    if (ovFreq.checked) series.push({ color: C.ovFreq, fmt: fmtNum, hfmt: v => fmtNum(v) + ' posts/day', raw: weeks.map(w => w.count / 7) });
+    if (ovText.checked) series.push({ color: C.ovText, fmt: fmtNum, hfmt: v => fmtNum(v) + ' chars/day', raw: weeks.map(w => w.text / 7) });
+    if (ovNet.checked) series.push({ color: C.ovNet, fmt: fmtNum, hfmt: v => fmtNum(v) + ' net score/day', raw: weeks.map(w => w.net / 7) });
+    if (ovPct.checked) series.push({ color: C.ovPct, fmt: v => Math.round(v) + '%', hfmt: v => Math.round(v) + '% positive', raw: weeks.map(w => w.count ? w.pos / w.count * 100 : null) });
+    if (ovAvg.checked) series.push({ color: C.ovAvg, fmt: fmtNum, hfmt: v => fmtNum(v) + ' avg score', raw: weeks.map(w => w.count ? w.net / w.count : null) });
     ctx.lineJoin = ctx.lineCap = 'round';
+    const endLabels = [];
+    overlayPts = [];
     for (const s of series) {
       // normalize each overlay to its own range so its amplitude is
-      // independent of the dots' axis; it still pans/zooms with the chart
+      // independent of the dots' axis; the range comes from the UNSMOOTHED
+      // series so the smoothing slider only averages, never rescales
       let tmin = Infinity, tmax = -Infinity;
-      for (const v of s.vals) {
+      for (const v of s.raw) {
         if (v === null) continue;
         const t = sv(v);
         if (t < tmin) tmin = t;
@@ -499,16 +524,66 @@
       }
       const span = tmax - tmin || 1;
       const ny = t => by.min + (t - tmin) / span * (by.max - by.min);
+      const vals = smoothSeries(s.raw, smoothSigma);
+      const pts = [];
       ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      let pen = false;
+      let pen = false, first = -1, last = -1;
       for (let i = 0; i < weeks.length; i++) {
-        const v = s.vals[i];
+        const v = vals[i];
         if (v === null) { pen = false; continue; }
+        if (first < 0) first = i;
+        last = i;
         const lx = xPix(weeks[i].t), ly = yPix(ny(sv(v)));
+        pts.push({ x: lx, y: ly, v });
         if (pen) ctx.lineTo(lx, ly); else { ctx.moveTo(lx, ly); pen = true; }
       }
       ctx.stroke();
+      overlayPts.push({ pts, fmt: s.hfmt, color: s.color });
+      if (first >= 0) {
+        for (const [i, align, dx] of [[first, 'left', 4], [last, 'right', -4]]) {
+          endLabels.push({
+            x: xPix(weeks[i].t) + dx,
+            y: Math.max(M.top + 8, Math.min(H - M.bottom - 8, yPix(ny(sv(vals[i]))) - 11)),
+            align, text: s.fmt(vals[i]), color: s.color,
+          });
+        }
+      }
+    }
+    // endpoint value labels in each series' color, with a surface halo;
+    // labels on the same side are nudged apart so they never overlap
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    for (const align of ['left', 'right']) {
+      const g = endLabels.filter(L => L.align === align).sort((a, b) => a.y - b.y);
+      for (let i = 1; i < g.length; i++) {
+        if (g[i].y < g[i - 1].y + 13) g[i].y = g[i - 1].y + 13;
+      }
+    }
+    for (const L of endLabels) {
+      ctx.textAlign = L.align;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = C.surface;
+      ctx.fillStyle = L.color;
+      ctx.strokeText(L.text, L.x, L.y);
+      ctx.fillText(L.text, L.x, L.y);
+    }
+    // hovered point on an overlay line: marker dot + value label
+    if (overlayHover) {
+      ctx.fillStyle = C.surface;
+      ctx.beginPath(); ctx.arc(overlayHover.x, overlayHover.y, 6, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = overlayHover.color;
+      ctx.beginPath(); ctx.arc(overlayHover.x, overlayHover.y, 4, 0, 6.2832); ctx.fill();
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const hx = Math.max(M.left + 20, Math.min(W - M.right - 20, overlayHover.x));
+      const hy = Math.max(M.top + 8, overlayHover.y - 14);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = C.surface;
+      ctx.strokeText(overlayHover.text, hx, hy);
+      ctx.fillText(overlayHover.text, hx, hy);
     }
     } // end scatter overlays
 
@@ -588,9 +663,22 @@
     return best;
   }
 
+  function overlayNearest(mx, my) {
+    let best = null, bestD = 12 * 12;
+    for (const s of overlayPts) {
+      for (const p of s.pts) {
+        const dx = p.x - mx, dy = p.y - my;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, text: s.fmt(p.v), color: s.color }; }
+      }
+    }
+    return best;
+  }
+
   let dragging = false, lastX = 0, lastY = 0, moved = 0;
   canvas.addEventListener('pointerdown', e => {
     dragging = true; moved = 0;
+    overlayHover = null;
     lastX = e.clientX; lastY = e.clientY;
     canvas.classList.add('dragging');
     canvas.setPointerCapture(e.pointerId);
@@ -607,8 +695,11 @@
       return;
     }
     const d = nearest(mx, my);
-    if (d !== hovered) {
+    const oh = overlayNearest(mx, my);
+    const ohChanged = (oh && overlayHover && (oh.x !== overlayHover.x || oh.y !== overlayHover.y || oh.color !== overlayHover.color)) || (!oh !== !overlayHover);
+    if (d !== hovered || ohChanged) {
       hovered = d;
+      overlayHover = oh;
       if (!pinned) showDetail(d, false);
       requestAnimationFrame(draw);
     }
@@ -626,11 +717,13 @@
   });
   canvas.addEventListener('pointerleave', () => {
     hovered = null;
+    overlayHover = null;
     if (!pinned) showDetail(null, false);
     requestAnimationFrame(draw);
   });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
+    overlayHover = null;
     const r = canvas.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
     const f = Math.pow(1.0015, -e.deltaY);
@@ -665,8 +758,47 @@
   const ovNet = document.getElementById('ovNet');
   const ovPct = document.getElementById('ovPct');
   const ovAvg = document.getElementById('ovAvg');
+  const smoothRow = document.getElementById('smoothRow');
+  const smoothSlider = document.getElementById('smoothSlider');
+  const smoothVal = document.getElementById('smoothVal');
+
+  // gaussian-weighted moving average over the weekly series; sigma in weeks.
+  // nulls (weeks with no posts, for pct/avg) carry no weight, so gaps get
+  // bridged by their neighbors once smoothing is on.
+  let smoothSigma = 0;
+  function smoothSeries(vals, sigma) {
+    if (sigma <= 0) return vals;
+    const radius = Math.ceil(sigma * 3);
+    const kernel = Array.from({ length: radius + 1 }, (_, k) => Math.exp(-(k * k) / (2 * sigma * sigma)));
+    return vals.map((_, i) => {
+      let sum = 0, wsum = 0;
+      for (let j = Math.max(0, i - radius); j <= Math.min(vals.length - 1, i + radius); j++) {
+        const v = vals[j];
+        if (v === null) continue;
+        const w = kernel[Math.abs(j - i)];
+        sum += v * w;
+        wsum += w;
+      }
+      return wsum > 0 ? sum / wsum : null;
+    });
+  }
+  function updateSmoothRow() {
+    const any = [ovFreq, ovText, ovNet, ovPct, ovAvg].some(c => c.checked);
+    smoothRow.classList.toggle('visible', any);
+  }
+  function applySmooth() {
+    const v = +smoothSlider.value;
+    smoothSigma = Math.pow(v / 100, 2) * 26; // quadratic: fine control at the low end
+    smoothVal.textContent = v === 0 ? 'off' : `~${Math.max(1, Math.round(smoothSigma * 4))} wk`;
+  }
+  applySmooth();
+  smoothSlider.addEventListener('input', () => {
+    applySmooth();
+    requestAnimationFrame(draw);
+  });
+
   for (const el of [ovFreq, ovText, ovNet, ovPct, ovAvg]) {
-    el.addEventListener('change', () => requestAnimationFrame(draw));
+    el.addEventListener('change', () => { updateSmoothRow(); requestAnimationFrame(draw); });
   }
 
   function toggleLabel() {
