@@ -468,25 +468,26 @@
   const wxOf = xu => 40 + kx0 * xu - W0 / 2;                 // layout-x -> world
   const wyOf = yu => H0 / 2 - (40 + ky0 * yu);               // layout-y -> world
   const yuOf = v => (ymax - symlog(v)) / (ymax - ymin) * 1000;
-  function project(x, y, z) {
-    const cy = Math.cos(yaw), sy = Math.sin(yaw);
-    const cp = Math.cos(pitch), sp = Math.sin(pitch);
-    const x1 = cy * x + sy * z;
-    const z1 = -sy * x + cy * z;
-    const y1 = cp * y - sp * z1;
-    return { x: x1 * zoom + W / 2 + pan.x, y: H - (y1 * zoom + H / 2 + pan.y) };
-  }
-  function labelText(p, text, align) {
-    if (p.x < -60 || p.x > W + 60 || p.y < -20 || p.y > H + 20) return;
+  function labelText(wx, wy, text, align) {
     lctx.textAlign = align;
-    lctx.strokeText(text, p.x, p.y);
-    lctx.fillText(text, p.x, p.y);
+    lctx.strokeText(text, wx, -wy);
+    lctx.fillText(text, wx, -wy);
   }
   function drawLabels() {
     const dpr2 = window.devicePixelRatio || 1;
     lctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
     lctx.clearRect(0, 0, W, H);
-    lctx.font = '11px system-ui, sans-serif';
+    // the wall plane (z=0) maps to the screen by a plain affine transform
+    // under this orthographic camera, so set it on the context and draw the
+    // labels in wall coordinates: they rotate/shear/scale like painted text.
+    // (u, v) = (world x, -world y) so glyphs stay y-down in glyph space.
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const a = cy * zoom, b = -sp * sy * zoom;
+    const d = cp * zoom;
+    const e = W / 2 + pan.x, f = H / 2 - pan.y;
+    lctx.setTransform(dpr2 * a, dpr2 * b, 0, dpr2 * d, dpr2 * e, dpr2 * f);
+    lctx.font = '11px system-ui, sans-serif';   // world units: scales with zoom
     lctx.textBaseline = 'middle';
     lctx.fillStyle = '#898781';
     lctx.strokeStyle = 'rgba(252, 252, 251, 0.75)';
@@ -497,17 +498,17 @@
       const sl = symlog(v);
       if (sl > ymax || sl < ymin) continue;
       const lbl = Math.abs(v) >= 1000 ? (v / 1000) + 'k' : String(v);
-      labelText(project(xL - 14, wyOf(yuOf(v)), 0), lbl, 'right');
+      labelText(xL - 14, wyOf(yuOf(v)), lbl, 'right');
     }
     // year ticks along the bottom edge
     const y0 = new Date(t0).getUTCFullYear() + 1, y1 = new Date(t1).getUTCFullYear();
     for (let y = y0; y <= y1; y++) {
       const t = Date.UTC(y, 0, 1);
-      labelText(project(wxOf((t - t0) / (t1 - t0) * 2000), yB - 20, 0), String(y), 'center');
+      labelText(wxOf((t - t0) / (t1 - t0) * 2000), yB - 20, String(y), 'center');
     }
-    labelText(project(0, yB - 44, 0), 'time →', 'center');
+    labelText(0, yB - 44, 'time →', 'center');
     // axis title above the top score tick
-    labelText(project(xL - 14, wyOf(-24), 0), 'score', 'right');
+    labelText(xL - 14, wyOf(-24), 'score', 'right');
   }
 
   // ---- interaction ----
