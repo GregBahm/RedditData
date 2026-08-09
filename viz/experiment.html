@@ -39,25 +39,26 @@
   #pick {
     position: fixed; display: none;
     transform: translate(-50%, -100%);
-    background: rgba(252, 252, 251, 0.96);
-    border: 1px solid rgba(11, 11, 11, 0.15);
+    background: var(--pick-bg, #fcfcfb);
+    border: 1px solid rgba(128, 128, 128, 0.4);
     border-radius: 8px;
     padding: 10px 12px;
-    font-size: 13px; line-height: 1.4; color: #2a2a28;
+    font-size: 13px; line-height: 1.4;
+    color: var(--pick-tx, #2a2a28);
     max-width: 380px;
     pointer-events: none;
     z-index: 5;
   }
   #pick .score { font-weight: 600; font-size: 16px; margin-right: 8px; }
-  #pick .meta { color: #52514e; margin-bottom: 4px; }
+  #pick .meta { opacity: 0.8; margin-bottom: 4px; }
   #pick .title { font-weight: 600; margin-bottom: 2px; }
-  #pick .thread { font-weight: 600; color: #52514e; margin-bottom: 2px; }
+  #pick .thread { font-weight: 600; opacity: 0.8; margin-bottom: 2px; }
   #pick .body {
-    color: #52514e;
+    opacity: 0.8;
     max-height: 120px; overflow: hidden;
     white-space: pre-wrap; overflow-wrap: break-word;
   }
-  #pick .note { font-size: 12px; color: #898781; margin-top: 6px; }
+  #pick .note { font-size: 12px; opacity: 0.65; margin-top: 6px; }
   #pick a { color: #2a78d6; text-decoration: none; }
   #pick a:hover { text-decoration: underline; }
 </style>
@@ -77,6 +78,7 @@
     <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#1c1c1c"></div>
     <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#171717"></div>
     <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#f0f0f0"></div>
+    <div class="prow"><span>post panel</span><input type="color" id="cPickBg" value="#fcfcfb" title="Background"><input type="color" id="cPickTx" value="#2a2a28" title="Text"></div>
     <div class="prow"><span>perspective</span><input type="checkbox" id="cPersp" checked></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
     <div id="dofRows">
@@ -491,7 +493,7 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -522,6 +524,9 @@
     light.persp = ctl.cPersp.checked;
     document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
     document.getElementById('focusRow').style.display = ctl.cPostM.checked ? 'none' : '';
+    const pk = document.getElementById('pick');
+    pk.style.setProperty('--pick-bg', ctl.cPickBg.value);
+    pk.style.setProperty('--pick-tx', ctl.cPickTx.value);
   }
   readLight();
 
