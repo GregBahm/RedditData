@@ -80,7 +80,8 @@
     <div class="prow"><span>perspective</span><input type="checkbox" id="cPersp" checked></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
     <div id="dofRows">
-      <div class="prow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="320"></div>
+      <div class="prow"><span>post mode</span><input type="checkbox" id="cPostM" checked></div>
+      <div class="prow" id="focusRow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="320"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.004"></div>
     </div>
   </div>
@@ -490,7 +491,7 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPersp', 'cDofOn', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -517,8 +518,10 @@
     light.albL = hex2lin(ctl.cLbl.value);
     light.dofK = ctl.cDofOn.checked ? +ctl.cAper.value : 0;
     light.focusZ = +ctl.cFocus.value;
+    light.postMode = ctl.cPostM.checked;
     light.persp = ctl.cPersp.checked;
     document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
+    document.getElementById('focusRow').style.display = ctl.cPostM.checked ? 'none' : '';
   }
   readLight();
 
@@ -559,8 +562,15 @@
     gl.uniform3fv(U('uAlbB'), light.albB);
     gl.uniform3fv(U('uAlbS'), light.albS);
     gl.uniform4f(U('uRect'), wxOf(0), wyOf(1000), wxOf(2000), wyOf(0));
-    gl.uniform1f(U('uDofK'), light.dofK);
-    gl.uniform1f(U('uFocusZ'), light.focusZ);
+    // post mode: DoF only while an item is shown, focused on it under the hood
+    let dofK = light.dofK, focusZ = light.focusZ;
+    if (light.postMode) {
+      const shown = hoverId >= 0 ? hoverId : pinId;
+      if (shown >= 0) focusZ = camZ(shown);
+      else dofK = 0;
+    }
+    gl.uniform1f(U('uDofK'), dofK);
+    gl.uniform1f(U('uFocusZ'), focusZ);
     gl.uniform1f(U('uEyeZ'), light.persp ? EYE_D : 0);
     gl.uniform1f(U('uHiA'), hoverId);
     gl.uniform1f(U('uHiB'), pinId);
@@ -707,11 +717,6 @@
     const cp = Math.cos(pitch), sp = Math.sin(pitch);
     return sp * py[i] + cp * (-sy * px[i] + cy * pz[i]);
   }
-  function focusOn(i) {
-    if (i < 0 || !ctl.cDofOn.checked) return;
-    ctl.cFocus.value = Math.max(-2000, Math.min(4000, Math.round(camZ(i))));
-    readLight();   // transient: follows hover, not written into saved tuning
-  }
   function itemAnchor(i) {
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
     const cp = Math.cos(pitch), sp = Math.sin(pitch);
@@ -803,7 +808,6 @@
     canvas.style.cursor = id >= 0 ? 'pointer' : '';
     if (id !== hoverId) {
       hoverId = id;
-      focusOn(id);
       reset();
     } else {
       updatePick(e.clientX, e.clientY);
