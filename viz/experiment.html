@@ -13,11 +13,36 @@
     position: fixed; top: 10px; right: 14px;
     font-size: 12px; color: #898781; pointer-events: none;
   }
+  #panel {
+    position: fixed; left: 14px; bottom: 14px;
+    background: rgba(252, 252, 251, 0.92);
+    border: 1px solid rgba(11, 11, 11, 0.12);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px; color: #52514e;
+    display: grid; gap: 6px;
+    user-select: none;
+  }
+  .prow { display: flex; align-items: center; gap: 8px; }
+  .prow span { width: 80px; }
+  .prow input[type=range] { width: 130px; margin: 0; }
+  .prow input[type=color] {
+    width: 28px; height: 18px; padding: 0;
+    border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
+  }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<div id="panel">
+  <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="-40"></div>
+  <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="38"></div>
+  <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffffff"><input type="range" id="cSunI" min="0" max="4" step="0.05" value="1.7"></div>
+  <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#ffffff"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.75"></div>
+  <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
+  <div class="prow"><span>wall</span><input type="color" id="cWall" value="#eeeeee"></div>
+</div>
 <script src="data.js"></script>
 <script>
 (() => {
@@ -131,13 +156,13 @@
 
   const float R = ${R.toFixed(1)};
   const float CELL = ${CELL.toFixed(1)};
-  const vec3 SUN_DIR = normalize(vec3(-0.5, 0.62, 0.6));
   const float SUN_COSMAX = 0.9992;   // ~2.3 degree angular radius
-  const float SUN_E = 1.7;           // irradiance at normal incidence
-  const float SKY_L = 0.75;          // uniform dome radiance
-  const vec3 ALB_WALL = vec3(0.86);
-  const vec3 ALB_SPHERE = vec3(0.85);
   const float PI = 3.14159265;
+  uniform vec3 uSunDir;              // toward the sun
+  uniform vec3 uSunE;                // sun color * intensity (irradiance)
+  uniform vec3 uSkyL;                // dome color * intensity (radiance)
+  uniform vec3 uAlbW;                // wall albedo
+  uniform vec3 uAlbS;                // sphere albedo
 
   uint pcg(inout uint s) {
     s = s * 747796405u + 2891336453u;
@@ -249,14 +274,14 @@
     vec3 tp = vec3(1.0);
     for (int bounce = 0; bounce < 2; bounce++) {
       vec2 h = trace(o, d);
-      if (h.y < -1.5) { L += tp * SKY_L; break; }
+      if (h.y < -1.5) { L += tp * uSkyL; break; }
       vec3 p = o + d * h.x;
       vec3 n = h.y < -0.5 ? vec3(0.0, 0.0, 1.0) : normalize(p - spherePos(int(h.y)));
-      tp *= h.y < -0.5 ? ALB_WALL : ALB_SPHERE;
-      vec3 sd = coneDir(SUN_DIR, seed);
+      tp *= h.y < -0.5 ? uAlbW : uAlbS;
+      vec3 sd = coneDir(uSunDir, seed);
       float ndl = dot(n, sd);
       if (ndl > 0.0 && !occluded(p + n * 0.02, sd)) {
-        L += tp * SUN_E * ndl / PI;
+        L += tp * uSunE * ndl / PI;
       }
       if (bounce == 1) break;
       d = cosineDir(n, seed);
@@ -329,6 +354,23 @@
   const MAX_SPP = 1500;
   const hint = document.getElementById('hint');
 
+  // ---- lighting controls ----
+  const ctl = {};
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall']) {
+    ctl[id] = document.getElementById(id);
+  }
+  const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
+  const light = { sunDir: [0, 0, 1], sunE: [0, 0, 0], skyL: [0, 0, 0], albW: [0, 0, 0], albS: [0, 0, 0] };
+  function readLight() {
+    const az = +ctl.cAz.value * Math.PI / 180, el = +ctl.cEl.value * Math.PI / 180;
+    light.sunDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
+    light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
+    light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
+    light.albS = hex2lin(ctl.cSph.value);
+    light.albW = hex2lin(ctl.cWall.value);
+  }
+  readLight();
+
   function camToWorld() {
     const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
     const cx = Math.cos(-pitch), sx = Math.sin(-pitch);
@@ -356,6 +398,11 @@
     gl.uniform1f(U('uZoom'), zoom);
     gl.uniformMatrix3fv(U('uCamToWorld'), false, camToWorld());
     gl.uniform1f(U('uFrame'), frame);
+    gl.uniform3fv(U('uSunDir'), light.sunDir);
+    gl.uniform3fv(U('uSunE'), light.sunE);
+    gl.uniform3fv(U('uSkyL'), light.skyL);
+    gl.uniform3fv(U('uAlbW'), light.albW);
+    gl.uniform3fv(U('uAlbS'), light.albS);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
@@ -381,6 +428,9 @@
   }
 
   const reset = () => { frame = 0; };
+  for (const id in ctl) {
+    ctl[id].addEventListener('input', () => { readLight(); reset(); });
+  }
 
   // ---- interaction ----
   let mode = null, lastX = 0, lastY = 0;
