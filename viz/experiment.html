@@ -36,10 +36,10 @@
 <canvas id="gl"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
 <div id="panel">
-  <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="-40"></div>
-  <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="38"></div>
-  <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffffff"><input type="range" id="cSunI" min="0" max="4" step="0.05" value="1.7"></div>
-  <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#ffffff"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.75"></div>
+  <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="55"></div>
+  <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="14"></div>
+  <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffb877"><input type="range" id="cSunI" min="0" max="4" step="0.05" value="2.6"></div>
+  <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#9db4dd"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.55"></div>
   <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
   <div class="prow"><span>wall</span><input type="color" id="cWall" value="#eeeeee"></div>
 </div>
@@ -359,6 +359,15 @@
   for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall']) {
     ctl[id] = document.getElementById(id);
   }
+  try {
+    const saved = JSON.parse(localStorage.getItem('pt-light') || 'null');
+    if (saved) for (const id in ctl) if (saved[id] !== undefined) ctl[id].value = saved[id];
+  } catch (e) {}
+  const saveLight = () => {
+    const vals = {};
+    for (const id in ctl) vals[id] = ctl[id].value;
+    localStorage.setItem('pt-light', JSON.stringify(vals));
+  };
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
   const light = { sunDir: [0, 0, 1], sunE: [0, 0, 0], skyL: [0, 0, 0], albW: [0, 0, 0], albS: [0, 0, 0] };
   function readLight() {
@@ -429,7 +438,7 @@
 
   const reset = () => { frame = 0; };
   for (const id in ctl) {
-    ctl[id].addEventListener('input', () => { readLight(); reset(); });
+    ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
   }
 
   // ---- interaction ----
