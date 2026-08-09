@@ -33,115 +33,354 @@
   const ys = items.map(d => symlog(d.score));
   const ymin = Math.min(...ys), ymax = Math.max(...ys);
 
-  // abstract layout space: x in [0..2000], y in [0..1000] (top = high score)
-  const px0 = new Float32Array(N), py0 = new Float32Array(N);
-  for (let i = 0; i < N; i++) {
-    px0[i] = (items[i].time - t0) / (t1 - t0) * 2000;
-    py0[i] = (ymax - ys[i]) / (ymax - ymin) * 1000;
+  // ---- frozen world layout ----
+  // positions and size are fixed at the initial window fit; the "sculpture"
+  // then only gets viewed (pan / zoom / rotate), so lighting can be coherent.
+  const W0 = window.innerWidth, H0 = window.innerHeight;
+  const R = 4;            // sphere radius, world units
+  const CELL = 2 * R;     // stacking bin and trace-grid cell size
+  const kx0 = (W0 - 80) / 2000, ky0 = (H0 - 80) / 1000;
+  const px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
+  {
+    const bins = new Map();
+    for (let i = 0; i < N; i++) {
+      const sx = 40 + kx0 * ((items[i].time - t0) / (t1 - t0) * 2000);
+      const sy = 40 + ky0 * ((ymax - ys[i]) / (ymax - ymin) * 1000);
+      px[i] = sx - W0 / 2;
+      py[i] = H0 / 2 - sy;            // y up
+      const key = Math.round(px[i] / CELL) * 1048576 + Math.round(py[i] / CELL);
+      const n = bins.get(key) || 0;
+      pz[i] = R + n * 2 * R;          // stack toward the viewer, resting on the wall
+      bins.set(key, n + 1);
+    }
   }
 
-  // ---- gl setup ----
-  const canvas = document.getElementById('gl');
-  const gl = canvas.getContext('webgl2', { antialias: true });
-  const PS = 8; // sphere diameter in css px (constant under zoom)
+  // ---- uniform grid over XY for ray traversal ----
+  // spheres are inserted into every cell they overlap, so DDA never misses.
+  let gminX = Infinity, gminY = Infinity, gmaxX = -Infinity, gmaxY = -Infinity;
+  for (let i = 0; i < N; i++) {
+    gminX = Math.min(gminX, px[i] - R); gmaxX = Math.max(gmaxX, px[i] + R);
+    gminY = Math.min(gminY, py[i] - R); gmaxY = Math.max(gmaxY, py[i] + R);
+  }
+  gminX -= 1; gminY -= 1;
+  const GW = Math.ceil((gmaxX - gminX + 2) / CELL);
+  const GH = Math.ceil((gmaxY - gminY + 2) / CELL);
+  const cellLists = new Array(GW * GH);
+  for (let i = 0; i < N; i++) {
+    const cx0 = Math.max(0, Math.floor((px[i] - R - gminX) / CELL));
+    const cx1 = Math.min(GW - 1, Math.floor((px[i] + R - gminX) / CELL));
+    const cy0 = Math.max(0, Math.floor((py[i] - R - gminY) / CELL));
+    const cy1 = Math.min(GH - 1, Math.floor((py[i] + R - gminY) / CELL));
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const c = cy * GW + cx;
+        (cellLists[c] || (cellLists[c] = [])).push(i);
+      }
+    }
+  }
+  const gridData = new Uint32Array(GW * GH * 2);
+  const idxList = [];
+  for (let c = 0; c < GW * GH; c++) {
+    gridData[c * 2] = idxList.length;
+    const list = cellLists[c];
+    gridData[c * 2 + 1] = list ? list.length : 0;
+    if (list) {
+      list.sort((a, b) => pz[b] - pz[a]);   // z-descending, for depth-window culling
+      for (const id of list) idxList.push(id);
+    }
+  }
+  const IDX_W = 512, IDX_H = Math.ceil(idxList.length / IDX_W);
+  const idxData = new Uint32Array(IDX_W * IDX_H);
+  idxData.set(idxList);
+  const POS_W = 128, POS_H = Math.ceil(N / POS_W);
+  const posData = new Float32Array(POS_W * POS_H * 4);
+  for (let i = 0; i < N; i++) {
+    posData[i * 4] = px[i]; posData[i * 4 + 1] = py[i]; posData[i * 4 + 2] = pz[i];
+  }
 
-  const vsrc = `#version 300 es
-  in vec3 aData;            // base x, base y, stack index
-  uniform vec4 uView;       // kx, ky, tx, ty
-  uniform vec2 uSize;       // canvas size, css px
-  uniform vec2 uRot;        // yaw, pitch
-  uniform float uPS;
-  uniform float uDpr;
-  out float vStack;
+  // ---- gl ----
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl2', { antialias: false });
+  if (!gl || !gl.getExtension('EXT_color_buffer_float')) {
+    document.getElementById('hint').textContent = 'WebGL2 float render targets unavailable';
+    return;
+  }
+
+  const fsq = `#version 300 es
   void main() {
-    float sx = uView.z + uView.x * aData.x;
-    float sy = uView.w + uView.y * aData.y;
-    vec3 w = vec3(sx - uSize.x * 0.5, uSize.y * 0.5 - sy, aData.z * uPS);
-    float cy = cos(uRot.x), sy_ = sin(uRot.x);
-    float cx = cos(uRot.y), sx_ = sin(uRot.y);
-    w = vec3(cy * w.x + sy_ * w.z, w.y, -sy_ * w.x + cy * w.z);        // yaw
-    w = vec3(w.x, cx * w.y - sx_ * w.z, sx_ * w.y + cx * w.z);         // pitch
-    gl_Position = vec4(w.x / (uSize.x * 0.5), w.y / (uSize.y * 0.5), -w.z / 100000.0, 1.0);
-    gl_PointSize = uPS * uDpr;
-    vStack = aData.z;
+    vec2 p = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3))[gl_VertexID];
+    gl_Position = vec4(p, 0, 1);
   }`;
-  const fsrc = `#version 300 es
-  precision mediump float;
-  in float vStack;
-  uniform vec3 uColor;
+
+  const traceSrc = `#version 300 es
+  precision highp float;
+  precision highp int;
+  precision highp usampler2D;
+  uniform sampler2D uPos;
+  uniform usampler2D uGrid;
+  uniform usampler2D uIdx;
+  uniform sampler2D uPrev;
+  uniform vec2 uGridMin;
+  uniform ivec2 uGridDim;
+  uniform vec2 uSize;
+  uniform vec2 uPan;
+  uniform float uZoom;
+  uniform mat3 uCamToWorld;
+  uniform float uFrame;
+  out vec4 outc;
+
+  const float R = ${R.toFixed(1)};
+  const float CELL = ${CELL.toFixed(1)};
+  const vec3 SUN_DIR = normalize(vec3(-0.5, 0.62, 0.6));
+  const float SUN_COSMAX = 0.9992;   // ~2.3 degree angular radius
+  const float SUN_E = 1.7;           // irradiance at normal incidence
+  const float SKY_L = 0.75;          // uniform dome radiance
+  const vec3 ALB_WALL = vec3(0.86);
+  const vec3 ALB_SPHERE = vec3(0.85);
+  const float PI = 3.14159265;
+
+  uint pcg(inout uint s) {
+    s = s * 747796405u + 2891336453u;
+    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+  }
+  float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
+
+  vec3 spherePos(int i) { return texelFetch(uPos, ivec2(i % ${POS_W}, i / ${POS_W}), 0).xyz; }
+  uint idxAt(int i) { return texelFetch(uIdx, ivec2(i % ${IDX_W}, i / ${IDX_W}), 0).r; }
+
+  float iSphere(vec3 o, vec3 d, vec3 c) {
+    vec3 oc = o - c;
+    float b = dot(oc, d);
+    float h = b * b - (dot(oc, oc) - R * R);
+    if (h < 0.0) return -1.0;
+    return -b - sqrt(h);
+  }
+
+  // returns t in x, id in y (as float: -2 miss, -1 wall, >=0 sphere)
+  vec2 trace(vec3 o, vec3 d) {
+    float bestT = 1e30;
+    float bestId = -2.0;
+    if (abs(d.z) > 1e-7) {
+      float t = -o.z / d.z;
+      if (t > 1e-3 && t < bestT) { bestT = t; bestId = -1.0; }
+    }
+    float tEnter = 0.0, tLimit = bestT;
+    vec2 gmax = uGridMin + vec2(uGridDim) * CELL;
+    if (abs(d.x) < 1e-9) { if (o.x < uGridMin.x || o.x > gmax.x) tEnter = 1e31; }
+    else {
+      float t1 = (uGridMin.x - o.x) / d.x, t2 = (gmax.x - o.x) / d.x;
+      tEnter = max(tEnter, min(t1, t2)); tLimit = min(tLimit, max(t1, t2));
+    }
+    if (abs(d.y) < 1e-9) { if (o.y < uGridMin.y || o.y > gmax.y) tEnter = 1e31; }
+    else {
+      float t1 = (uGridMin.y - o.y) / d.y, t2 = (gmax.y - o.y) / d.y;
+      tEnter = max(tEnter, min(t1, t2)); tLimit = min(tLimit, max(t1, t2));
+    }
+    if (tEnter <= tLimit) {
+      vec2 p = o.xy + d.xy * (tEnter + 1e-4);
+      ivec2 c = clamp(ivec2(floor((p - uGridMin) / CELL)), ivec2(0), uGridDim - 1);
+      ivec2 stp = ivec2(d.x > 0.0 ? 1 : -1, d.y > 0.0 ? 1 : -1);
+      vec2 tDelta = CELL / max(abs(d.xy), vec2(1e-9));
+      vec2 nb;
+      nb.x = abs(d.x) < 1e-9 ? 1e30 : (uGridMin.x + float(c.x + (d.x > 0.0 ? 1 : 0)) * CELL - o.x) / d.x;
+      nb.y = abs(d.y) < 1e-9 ? 1e30 : (uGridMin.y + float(c.y + (d.y > 0.0 ? 1 : 0)) * CELL - o.y) / d.y;
+      float tCellEnter = max(tEnter, 0.0);
+      for (int it = 0; it < 900; it++) {
+        float tExitCell = min(nb.x, nb.y);
+        // only test spheres whose z overlaps the ray's z-range in this cell;
+        // per-cell lists are z-descending, so we can skip then break early
+        float zA = o.z + d.z * tCellEnter;
+        float zB = o.z + d.z * min(tExitCell, min(bestT, tLimit));
+        float zHi = max(zA, zB) + R + 1e-3;
+        float zLo = min(zA, zB) - R - 1e-3;
+        uvec2 oc = texelFetch(uGrid, c, 0).xy;
+        for (uint k = 0u; k < oc.y; k++) {
+          int id = int(idxAt(int(oc.x + k)));
+          vec3 sc2 = spherePos(id);
+          if (sc2.z > zHi) continue;
+          if (sc2.z < zLo) break;
+          float t = iSphere(o, d, sc2);
+          if (t > 1e-3 && t < bestT) { bestT = t; bestId = float(id); }
+        }
+        if (bestT <= tExitCell || tExitCell > tLimit) break;
+        tCellEnter = tExitCell;
+        if (nb.x < nb.y) { c.x += stp.x; nb.x += tDelta.x; }
+        else { c.y += stp.y; nb.y += tDelta.y; }
+        if (c.x < 0 || c.y < 0 || c.x >= uGridDim.x || c.y >= uGridDim.y) break;
+      }
+    }
+    return vec2(bestT, bestId);
+  }
+
+  bool occluded(vec3 o, vec3 d) {
+    vec2 h = trace(o, d);
+    return h.y >= 0.0;   // wall can't shadow the sun (sun is in front of it)
+  }
+
+  vec3 onbT(vec3 n) {
+    vec3 a = abs(n.z) < 0.9 ? vec3(0, 0, 1) : vec3(1, 0, 0);
+    return normalize(cross(a, n));
+  }
+  vec3 cosineDir(vec3 n, inout uint s) {
+    float r1 = rnd(s), r2 = rnd(s);
+    float rr = sqrt(r1), ph = 6.2831853 * r2;
+    vec3 t = onbT(n), b = cross(n, t);
+    return normalize(t * (rr * cos(ph)) + b * (rr * sin(ph)) + n * sqrt(max(0.0, 1.0 - r1)));
+  }
+  vec3 coneDir(vec3 dir, inout uint s) {
+    float r1 = rnd(s), r2 = rnd(s);
+    float ct = mix(SUN_COSMAX, 1.0, r1);
+    float st = sqrt(max(0.0, 1.0 - ct * ct)), ph = 6.2831853 * r2;
+    vec3 t = onbT(dir), b = cross(dir, t);
+    return normalize(t * (st * cos(ph)) + b * (st * sin(ph)) + dir * ct);
+  }
+
+  void main() {
+    uint seed = uint(gl_FragCoord.x) * 1973u + uint(gl_FragCoord.y) * 9277u + uint(uFrame) * 26699u;
+    pcg(seed);
+    // orthographic camera: jittered pixel -> camera plane -> world
+    vec2 pix = gl_FragCoord.xy + vec2(rnd(seed), rnd(seed)) - 0.5;
+    vec2 sc = (pix - 0.5 * uSize - uPan) / uZoom;
+    vec3 o = uCamToWorld * vec3(sc, 6000.0);
+    vec3 d = normalize(uCamToWorld * vec3(0.0, 0.0, -1.0));
+
+    vec3 L = vec3(0.0);
+    vec3 tp = vec3(1.0);
+    for (int bounce = 0; bounce < 2; bounce++) {
+      vec2 h = trace(o, d);
+      if (h.y < -1.5) { L += tp * SKY_L; break; }
+      vec3 p = o + d * h.x;
+      vec3 n = h.y < -0.5 ? vec3(0.0, 0.0, 1.0) : normalize(p - spherePos(int(h.y)));
+      tp *= h.y < -0.5 ? ALB_WALL : ALB_SPHERE;
+      vec3 sd = coneDir(SUN_DIR, seed);
+      float ndl = dot(n, sd);
+      if (ndl > 0.0 && !occluded(p + n * 0.02, sd)) {
+        L += tp * SUN_E * ndl / PI;
+      }
+      if (bounce == 1) break;
+      d = cosineDir(n, seed);
+      o = p + n * 0.02;
+    }
+
+    vec3 prev = texelFetch(uPrev, ivec2(gl_FragCoord.xy), 0).rgb;
+    outc = vec4(mix(prev, L, 1.0 / (uFrame + 1.0)), 1.0);
+  }`;
+
+  const showSrc = `#version 300 es
+  precision highp float;
+  uniform sampler2D uAcc;
   out vec4 o;
   void main() {
-    vec2 p = gl_PointCoord * 2.0 - 1.0;
-    float r2 = dot(p, p);
-    if (r2 > 1.0) discard;
-    vec3 n = vec3(p.x, -p.y, sqrt(1.0 - r2));
-    float diff = max(dot(n, normalize(vec3(-0.35, 0.5, 0.78))), 0.0);
-    vec3 col = uColor * (0.45 + 0.55 * diff);
-    col *= 1.0 - min(vStack * 0.0025, 0.35);   // deeper stacks slightly darker
-    o = vec4(col, 1.0);
+    vec3 c = texelFetch(uAcc, ivec2(gl_FragCoord.xy), 0).rgb;
+    c = pow(clamp(c * 1.02, 0.0, 1.0), vec3(1.0 / 2.2));
+    o = vec4(c, 1.0);
   }`;
-  const mk = (type, src) => {
+
+  const mkShader = (type, src) => {
     const s = gl.createShader(type);
     gl.shaderSource(s, src);
     gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, mk(gl.VERTEX_SHADER, vsrc));
-  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsrc));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
-  const U = name => gl.getUniformLocation(prog, name);
+  const mkProg = (vs, fs) => {
+    const p = gl.createProgram();
+    gl.attachShader(p, mkShader(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, mkShader(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  };
+  const progTrace = mkProg(fsq, traceSrc);
+  const progShow = mkProg(fsq, showSrc);
 
-  const attr = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    attr[i * 3] = px0[i];
-    attr[i * 3 + 1] = py0[i];
+  const mkTex = (w, h, ifmt, fmt, type, data) => {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, data);
+    return t;
+  };
+  const texPos = mkTex(POS_W, POS_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, posData);
+  const texGrid = mkTex(GW, GH, gl.RG32UI, gl.RG_INTEGER, gl.UNSIGNED_INT, gridData);
+  const texIdx = mkTex(IDX_W, IDX_H, gl.R32UI, gl.RED_INTEGER, gl.UNSIGNED_INT, idxData);
+
+  // ---- accumulation targets ----
+  let W = 0, H = 0;
+  let accTex = [null, null], accFb = [null, null], flip = 0;
+  function mkTargets() {
+    for (let i = 0; i < 2; i++) {
+      if (accTex[i]) { gl.deleteTexture(accTex[i]); gl.deleteFramebuffer(accFb[i]); }
+      accTex[i] = mkTex(W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
+      accFb[i] = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[i]);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, accTex[i], 0);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, attr, gl.DYNAMIC_DRAW);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-  gl.enable(gl.DEPTH_TEST);
 
   // ---- view state ----
-  let W = 0, H = 0, dpr = 1;
-  let view = { kx: 1, ky: 1, tx: 0, ty: 0 };
-  let yaw = 0, pitch = 0;
+  let pan = { x: 0, y: 0 }, zoom = 1, yaw = 0, pitch = 0;
+  let frame = 0;
+  const MAX_SPP = 1500;
+  const hint = document.getElementById('hint');
 
-  // stack overlapping spheres toward the viewer: bin screen positions into
-  // sphere-sized cells; each occupant of a cell gets the next depth slot.
-  // depends only on zoom (not pan), so it reruns on wheel, not on drag.
-  function restack() {
-    const cell = PS;
-    const bins = new Map();
-    for (let i = 0; i < N; i++) {
-      const ix = Math.round(view.kx * px0[i] / cell);
-      const iy = Math.round(view.ky * py0[i] / cell);
-      const key = ix * 1048576 + iy;
-      const n = bins.get(key) || 0;
-      attr[i * 3 + 2] = n;
-      bins.set(key, n + 1);
-    }
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, attr, gl.DYNAMIC_DRAW);
+  function camToWorld() {
+    const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
+    const cx = Math.cos(-pitch), sx = Math.sin(-pitch);
+    // Ry(-yaw) * Rx(-pitch), column-major
+    return new Float32Array([
+      cy, 0, -sy,
+      sy * sx, cx, cy * sx,
+      sy * cx, -sx, cy * cx,
+    ]);
   }
 
-  function draw() {
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.976, 0.976, 0.968, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.uniform4f(U('uView'), view.kx, view.ky, view.tx, view.ty);
+  function renderSample() {
+    gl.useProgram(progTrace);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[flip]);
+    gl.viewport(0, 0, W, H);
+    const U = n => gl.getUniformLocation(progTrace, n);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texPos); gl.uniform1i(U('uPos'), 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texGrid); gl.uniform1i(U('uGrid'), 1);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, texIdx); gl.uniform1i(U('uIdx'), 2);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, accTex[1 - flip]); gl.uniform1i(U('uPrev'), 3);
+    gl.uniform2f(U('uGridMin'), gminX, gminY);
+    gl.uniform2i(U('uGridDim'), GW, GH);
     gl.uniform2f(U('uSize'), W, H);
-    gl.uniform2f(U('uRot'), yaw, pitch);
-    gl.uniform1f(U('uPS'), PS);
-    gl.uniform1f(U('uDpr'), dpr);
-    gl.uniform3f(U('uColor'), 0.55, 0.54, 0.52);
-    gl.drawArrays(gl.POINTS, 0, N);
+    gl.uniform2f(U('uPan'), pan.x, pan.y);
+    gl.uniform1f(U('uZoom'), zoom);
+    gl.uniformMatrix3fv(U('uCamToWorld'), false, camToWorld());
+    gl.uniform1f(U('uFrame'), frame);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.useProgram(progShow);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, W, H);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, accTex[flip]);
+    gl.uniform1i(gl.getUniformLocation(progShow, 'uAcc'), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    flip = 1 - flip;
+    frame++;
   }
+
+  function loop() {
+    if (frame < MAX_SPP) {
+      renderSample();
+      if (frame % 10 === 0 || frame < 10) {
+        hint.textContent = `path tracing · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  const reset = () => { frame = 0; };
 
   // ---- interaction ----
   let mode = null, lastX = 0, lastY = 0;
@@ -155,41 +394,35 @@
     if (!mode) return;
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
-    if (mode === 'pan') {
-      view.tx += dx; view.ty += dy;
-    } else {
+    if (mode === 'pan') { pan.x += dx; pan.y -= dy; }
+    else {
       yaw += dx * 0.008;
       pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
     }
-    requestAnimationFrame(draw);
+    reset();
   });
   canvas.addEventListener('pointerup', () => { mode = null; });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     const f = Math.pow(1.0015, -e.deltaY);
-    view.kx *= f; view.ky *= f;
-    view.tx = e.clientX - (e.clientX - view.tx) * f;
-    view.ty = e.clientY - (e.clientY - view.ty) * f;
-    restack();
-    requestAnimationFrame(draw);
+    const cx = e.clientX - W / 2, cy = H / 2 - e.clientY;
+    zoom *= f;
+    pan.x = cx - (cx - pan.x) * f;
+    pan.y = cy - (cy - pan.y) * f;
+    reset();
   }, { passive: false });
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
-    dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    draw();
+    canvas.width = W;      // trace at css resolution; hi-dpi would double cost
+    canvas.height = H;
+    mkTargets();
+    reset();
   }
   window.addEventListener('resize', resize);
-
-  // initial fit: layout space into the window with a margin
-  W = window.innerWidth; H = window.innerHeight;
-  view.kx = (W - 80) / 2000;
-  view.ky = (H - 80) / 1000;
-  view.tx = 40; view.ty = 40;
-  restack();
   resize();
+  loop();
+  window.__pt = { sample: renderSample, spp: () => frame, gl };  // debug hook
 })();
 </script>
 </body>
