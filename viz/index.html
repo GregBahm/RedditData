@@ -18,6 +18,7 @@
     --dot: #898781;
     --accent: #2a78d6;
     --ov-freq: #eb6834;
+    --ov-text: #0f8fa6;
     --ov-net: #1baf7a;
     --ov-pct: #4a3aa7;
     --ov-avg: #e87ba4;
@@ -36,6 +37,7 @@
       --dot: #898781;
       --accent: #3987e5;
       --ov-freq: #d95926;
+      --ov-text: #27a9c2;
       --ov-net: #199e70;
       --ov-pct: #9085e9;
       --ov-avg: #d55181;
@@ -53,6 +55,11 @@
   }
   header {
     padding: 14px 20px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  header .bar {
     display: flex;
     align-items: baseline;
     gap: 16px;
@@ -77,8 +84,7 @@
     color: var(--text-primary);
     font-weight: 600;
   }
-  .mode-top #legendMain, .mode-top #legendOv { display: none; }
-  header .sub { font-size: 13px; color: var(--text-secondary); }
+  .mode-top #legendOv { display: none; }
   .controls {
     margin-left: auto;
     display: flex;
@@ -92,6 +98,9 @@
   .swatch.sq { border-radius: 2px; }
   .legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
   .legend label input { margin: 0; }
+  .radios { font-size: 13px; align-self: center; }
+  .radios label { color: var(--text-primary); }
+  #legendOv { font-size: 13px; align-self: center; }
   .key { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
   button.toggle {
     font: inherit;
@@ -174,27 +183,26 @@
 </head>
 <body>
 <header>
-  <h1>Reddit posting history</h1>
-  <nav class="tabs">
-    <button class="tab active" id="tabTime">Posts by Score</button>
-    <button class="tab" id="tabLen">Posts by Length</button>
-    <button class="tab" id="tabDist">Score distribution</button>
-    <button class="tab" id="tabLdist">Length distribution</button>
-  </nav>
-  <span class="sub" id="subtitle">loading…</span>
-  <div class="controls">
-    <div class="legend" id="legendMain">
-      <span><span class="swatch sq" style="background:var(--dot)"></span>post</span>
-      <span><span class="swatch" style="background:var(--dot)"></span>comment</span>
+  <div class="bar">
+    <h1>Posts</h1>
+    <div class="legend radios">
+      <label><input type="radio" name="scatterY" id="ryScore" checked>Score</label>
+      <label><input type="radio" name="scatterY" id="ryLen">Length</label>
     </div>
+    <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
     <div class="legend" id="legendOv">
-      <label><input type="checkbox" id="ovFreq"><span class="key" style="background:var(--ov-freq)"></span>items/week</label>
+      <label><input type="checkbox" id="ovFreq"><span class="key" style="background:var(--ov-freq)"></span>posts/week</label>
+      <label><input type="checkbox" id="ovText"><span class="key" style="background:var(--ov-text)"></span>text/week</label>
       <label><input type="checkbox" id="ovNet"><span class="key" style="background:var(--ov-net)"></span>net score/week</label>
       <label><input type="checkbox" id="ovPct"><span class="key" style="background:var(--ov-pct)"></span>% positive/week</label>
       <label><input type="checkbox" id="ovAvg"><span class="key" style="background:var(--ov-avg)"></span>avg score/week</label>
     </div>
-    <button class="toggle" id="scaleToggle" title="Switch score axis scale">score: log</button>
-    <button class="toggle" id="resetView" title="Reset pan and zoom">reset view</button>
+    <div class="controls">
+      <nav class="tabs">
+        <button class="tab" id="tabDist">Score distribution</button>
+        <button class="tab" id="tabLdist">Length distribution</button>
+      </nav>
+    </div>
   </div>
 </header>
 <div id="chart-wrap">
@@ -211,7 +219,6 @@
   const ctx = canvas.getContext('2d');
   const wrap = document.getElementById('chart-wrap');
   const detail = document.getElementById('detail');
-  const subtitle = document.getElementById('subtitle');
   const scaleToggle = document.getElementById('scaleToggle');
 
   // ---- data prep ----
@@ -233,20 +240,14 @@
     return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
   })();
   const weeks = Array.from({ length: Math.floor((t1 - w0) / MS_WEEK) + 1 },
-    (_, i) => ({ t: w0 + i * MS_WEEK + MS_WEEK / 2, count: 0, net: 0, pos: 0 }));
+    (_, i) => ({ t: w0 + i * MS_WEEK + MS_WEEK / 2, count: 0, net: 0, pos: 0, text: 0 }));
   for (const d of items) {
     const w = weeks[Math.floor((d.time - w0) / MS_WEEK)];
     w.count++;
     w.net += d.score;
     if (d.score > 1) w.pos++;
+    w.text += d.len;
   }
-  const sMin = Math.min(...items.map(d => d.score));
-  const sMax = Math.max(...items.map(d => d.score));
-  subtitle.textContent =
-    `${items.length.toLocaleString()} posts & comments, ` +
-    `${new Date(t0).getFullYear()}–${new Date(t1).getFullYear()} · ` +
-    `scores ${sMin.toLocaleString()} to ${sMax.toLocaleString()}`;
-
   // every item ranked by score, for the "Score distribution" view
   const distItems = items.slice().sort((a, b) => b.score - a.score || a.time - b.time);
   distItems.forEach((d, i) => { d.drank = i + 1; });
@@ -302,8 +303,8 @@
     C = {
       surface: css('--surface-1'), grid: css('--gridline'), baseline: css('--baseline'),
       muted: css('--text-muted'), dot: css('--dot'), accent: css('--accent'),
-      ovFreq: css('--ov-freq'), ovNet: css('--ov-net'), ovPct: css('--ov-pct'),
-      ovAvg: css('--ov-avg'),
+      ovFreq: css('--ov-freq'), ovText: css('--ov-text'), ovNet: css('--ov-net'),
+      ovPct: css('--ov-pct'), ovAvg: css('--ov-avg'),
     };
   }
 
@@ -475,29 +476,41 @@
     } // end non-dist marks
     ctx.globalAlpha = 1;
 
-    if (mode === 'time') {
+    if (mode === 'time' || mode === 'ltime') {
     // overlay lines: weekly aggregates on the same (shared) y axis
     const sv = useLog ? symlog : (v => v);
     const series = [];
     if (ovFreq.checked) series.push({ color: C.ovFreq, vals: weeks.map(w => w.count) });
+    if (ovText.checked) series.push({ color: C.ovText, vals: weeks.map(w => w.text) });
     if (ovNet.checked) series.push({ color: C.ovNet, vals: weeks.map(w => w.net) });
     if (ovPct.checked) series.push({ color: C.ovPct, vals: weeks.map(w => w.count ? w.pos / w.count * 100 : null) });
     if (ovAvg.checked) series.push({ color: C.ovAvg, vals: weeks.map(w => w.count ? w.net / w.count : null) });
     ctx.lineWidth = 2;
     ctx.lineJoin = ctx.lineCap = 'round';
     for (const s of series) {
+      // normalize each overlay to its own range so its amplitude is
+      // independent of the dots' axis; it still pans/zooms with the chart
+      let tmin = Infinity, tmax = -Infinity;
+      for (const v of s.vals) {
+        if (v === null) continue;
+        const t = sv(v);
+        if (t < tmin) tmin = t;
+        if (t > tmax) tmax = t;
+      }
+      const span = tmax - tmin || 1;
+      const ny = t => by.min + (t - tmin) / span * (by.max - by.min);
       ctx.strokeStyle = s.color;
       ctx.beginPath();
       let pen = false;
       for (let i = 0; i < weeks.length; i++) {
         const v = s.vals[i];
         if (v === null) { pen = false; continue; }
-        const lx = xPix(weeks[i].t), ly = yPix(sv(v));
+        const lx = xPix(weeks[i].t), ly = yPix(ny(sv(v)));
         if (pen) ctx.lineTo(lx, ly); else { ctx.moveTo(lx, ly); pen = true; }
       }
       ctx.stroke();
     }
-    } // end mode === 'time'
+    } // end scatter overlays
 
     // highlight hovered / pinned
     for (const d of [hovered, pinned]) {
@@ -648,17 +661,14 @@
   });
 
   const ovFreq = document.getElementById('ovFreq');
+  const ovText = document.getElementById('ovText');
   const ovNet = document.getElementById('ovNet');
   const ovPct = document.getElementById('ovPct');
   const ovAvg = document.getElementById('ovAvg');
-  for (const el of [ovFreq, ovNet, ovPct, ovAvg]) {
+  for (const el of [ovFreq, ovText, ovNet, ovPct, ovAvg]) {
     el.addEventListener('change', () => requestAnimationFrame(draw));
   }
 
-  document.getElementById('resetView').addEventListener('click', () => {
-    view = { kx: 1, ky: 1, tx: 0, ty: 0 };
-    requestAnimationFrame(draw);
-  });
   function toggleLabel() {
     scaleToggle.textContent = (mode === 'ltime' || mode === 'ldist' ? 'length: ' : 'score: ') + (useLog ? 'log' : 'linear');
   }
@@ -671,28 +681,35 @@
   });
 
   // view tabs
-  const tabTime = document.getElementById('tabTime');
-  const tabLen = document.getElementById('tabLen');
+  const ryScore = document.getElementById('ryScore');
+  const ryLen = document.getElementById('ryLen');
   const tabDist = document.getElementById('tabDist');
   const tabLdist = document.getElementById('tabLdist');
   function setMode(m) {
     if (mode === m) return;
+    // the two scatter views are the same chart with a different y — keep
+    // pan/zoom, pinned item, and overlays when hopping between them
+    const scatterSwap = (mode === 'time' || mode === 'ltime') && (m === 'time' || m === 'ltime');
     mode = m;
-    tabTime.classList.toggle('active', m === 'time');
-    tabLen.classList.toggle('active', m === 'ltime');
+    if (m === 'time') ryScore.checked = true;
+    if (m === 'ltime') ryLen.checked = true;
     tabDist.classList.toggle('active', m === 'dist');
     tabLdist.classList.toggle('active', m === 'ldist');
-    document.body.classList.toggle('mode-top', m !== 'time');
+    document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist');
     toggleLabel();
-    hovered = null;
-    pinned = null;
-    showDetail(null, false);
     computeBase();
-    view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+    if (scatterSwap) {
+      if (pinned) showDetail(pinned, true);
+    } else {
+      hovered = null;
+      pinned = null;
+      showDetail(null, false);
+      view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+    }
     requestAnimationFrame(draw);
   }
-  tabTime.addEventListener('click', () => setMode('time'));
-  tabLen.addEventListener('click', () => setMode('ltime'));
+  ryScore.addEventListener('change', () => setMode('time'));
+  ryLen.addEventListener('change', () => setMode('ltime'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
 
