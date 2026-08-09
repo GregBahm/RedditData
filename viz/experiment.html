@@ -36,11 +36,36 @@
     width: 28px; height: 18px; padding: 0;
     border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
   }
+  #pick {
+    position: fixed; display: none;
+    transform: translate(-50%, -100%);
+    background: rgba(252, 252, 251, 0.96);
+    border: 1px solid rgba(11, 11, 11, 0.15);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px; line-height: 1.4; color: #2a2a28;
+    max-width: 380px;
+    pointer-events: none;
+    z-index: 5;
+  }
+  #pick .score { font-weight: 600; font-size: 16px; margin-right: 8px; }
+  #pick .meta { color: #52514e; margin-bottom: 4px; }
+  #pick .title { font-weight: 600; margin-bottom: 2px; }
+  #pick .thread { font-weight: 600; color: #52514e; margin-bottom: 2px; }
+  #pick .body {
+    color: #52514e;
+    max-height: 120px; overflow: hidden;
+    white-space: pre-wrap; overflow-wrap: break-word;
+  }
+  #pick .note { font-size: 12px; color: #898781; margin-top: 6px; }
+  #pick a { color: #2a78d6; text-decoration: none; }
+  #pick a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<div id="pick"></div>
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
   <div id="panelBody">
@@ -68,6 +93,7 @@
     score: +d.score,
     post: d.type === 'post',
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
+    src: d,
   })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
   items.sort((a, b) => a.time - b.time);
   const N = items.length;
@@ -195,6 +221,8 @@
   uniform float uDofK;               // aperture strength (0 = pinhole)
   uniform float uFocusZ;             // camera-space depth of the focal plane
   uniform float uEyeZ;               // 0 = orthographic; else perspective eye depth
+  uniform float uHiA;                // hovered item id (-1 = none)
+  uniform float uHiB;                // pinned item id (-1 = none)
 
   uint pcg(inout uint s) {
     s = s * 747796405u + 2891336453u;
@@ -346,6 +374,11 @@
     for (int bounce = 0; bounce < 2; bounce++) {
       vec2 h = trace(o, d);
       if (h.y < -1.5) { L += tp * uSkyL; break; }
+      // hovered / pinned items glow: emissive, so the light also spills
+      // onto neighbors through the bounce
+      if (h.y >= 0.0 && (abs(h.y - uHiA) < 0.5 || abs(h.y - uHiB) < 0.5)) {
+        L += tp * 0.8;
+      }
       vec3 p = o + d * h.x;
       vec3 n;
       if (h.y < -0.5) {
@@ -450,6 +483,7 @@
 
   // ---- view state ----
   let pan = { x: 0, y: 0 }, zoom = 1, yaw = 0, pitch = 0;
+  let hoverId = -1, pinId = -1, lastMx = -1, lastMy = -1;
   let frame = 0;
   const MAX_SPP = 1500;
   const hint = document.getElementById('hint');
@@ -528,6 +562,8 @@
     gl.uniform1f(U('uDofK'), light.dofK);
     gl.uniform1f(U('uFocusZ'), light.focusZ);
     gl.uniform1f(U('uEyeZ'), light.persp ? EYE_D : 0);
+    gl.uniform1f(U('uHiA'), hoverId);
+    gl.uniform1f(U('uHiB'), pinId);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
@@ -552,7 +588,7 @@
     requestAnimationFrame(loop);
   }
 
-  const reset = () => { frame = 0; };
+  const reset = () => { frame = 0; updatePick(lastMx, lastMy); };
   for (const id in ctl) {
     ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
   }
@@ -614,26 +650,173 @@
     return t;
   })();
 
+  // ---- picking: hover / pin an item, glow it, follow focus, show info ----
+  const pickPanel = document.getElementById('pick');
+  function camRay(mx, my) {
+    const scx = (mx - 0.5 * W - pan.x) / zoom;
+    const scy = ((H - my) - 0.5 * H - pan.y) / zoom;
+    let oc, dc;
+    if (light.persp) {
+      const Ex = -pan.x / zoom, Ey = -pan.y / zoom;
+      oc = [Ex, Ey, EYE_D];
+      const dx = scx - Ex, dy = scy - Ey, dz = -EYE_D;
+      const l = Math.hypot(dx, dy, dz);
+      dc = [dx / l, dy / l, dz / l];
+    } else {
+      oc = [scx, scy, 6000];
+      dc = [0, 0, -1];
+    }
+    const m = camToWorld();
+    const ap = v => [
+      m[0] * v[0] + m[3] * v[1] + m[6] * v[2],
+      m[1] * v[0] + m[4] * v[1] + m[7] * v[2],
+      m[2] * v[0] + m[5] * v[1] + m[8] * v[2],
+    ];
+    return { o: ap(oc), d: ap(dc) };
+  }
+  function pick(mx, my) {
+    const { o, d } = camRay(mx, my);
+    let best = -1, bt = 1e30;
+    for (let i = 0; i < N; i++) {
+      let t = -1;
+      if (items[i].post) {
+        let tn = -1e30, tf = 1e30, miss = false;
+        const cs = [px[i], py[i], pz[i]];
+        for (let a = 0; a < 3; a++) {
+          if (Math.abs(d[a]) < 1e-9) {
+            if (o[a] < cs[a] - R || o[a] > cs[a] + R) { miss = true; break; }
+            continue;
+          }
+          const t1 = (cs[a] - R - o[a]) / d[a], t2 = (cs[a] + R - o[a]) / d[a];
+          tn = Math.max(tn, Math.min(t1, t2));
+          tf = Math.min(tf, Math.max(t1, t2));
+        }
+        if (!miss && tn <= tf && tn > 0) t = tn;
+      } else {
+        const ox = o[0] - px[i], oy = o[1] - py[i], oz = o[2] - pz[i];
+        const b = ox * d[0] + oy * d[1] + oz * d[2];
+        const hh = b * b - (ox * ox + oy * oy + oz * oz - R * R);
+        if (hh >= 0) { const tt = -b - Math.sqrt(hh); if (tt > 0) t = tt; }
+      }
+      if (t > 0 && t < bt) { bt = t; best = i; }
+    }
+    return best;
+  }
+  function camZ(i) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    return sp * py[i] + cp * (-sy * px[i] + cy * pz[i]);
+  }
+  function focusOn(i) {
+    if (i < 0 || !ctl.cDofOn.checked) return;
+    ctl.cFocus.value = Math.max(-2000, Math.min(4000, Math.round(camZ(i))));
+    readLight();   // transient: follows hover, not written into saved tuning
+  }
+  function itemAnchor(i) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const x1 = cy * px[i] + sy * pz[i];
+    const z1 = -sy * px[i] + cy * pz[i];
+    const y2 = cp * py[i] - sp * z1;
+    const z2 = sp * py[i] + cp * z1;
+    let qx = x1, qy = y2;
+    if (light.persp) {
+      const w = EYE_D / (EYE_D - z2);
+      const Ex = -pan.x / zoom, Ey = -pan.y / zoom;
+      qx = Ex + (x1 - Ex) * w;
+      qy = Ey + (y2 - Ey) * w;
+    }
+    return { x: qx * zoom + W / 2 + pan.x, y: H - (qy * zoom + H / 2 + pan.y) };
+  }
+  const el2 = (tag, cls, text) => {
+    const s = document.createElement(tag);
+    if (cls) s.className = cls;
+    if (text !== undefined) s.textContent = text;
+    return s;
+  };
+  function fillPick(i, pinned) {
+    const d = items[i].src;
+    pickPanel.replaceChildren();
+    const meta = el2('div', 'meta');
+    meta.append(el2('span', 'score', (+d.score).toLocaleString() + (Math.abs(+d.score) === 1 ? ' point' : ' points')));
+    meta.append(document.createTextNode(
+      new Date(items[i].time).toLocaleDateString(undefined, { dateStyle: 'medium' }) +
+      ' · r/' + d.sub + ' · ' + d.type));
+    pickPanel.append(meta);
+    if (d.title) pickPanel.append(el2('div', 'title', d.title));
+    if (d.thread) pickPanel.append(el2('div', 'thread', 'in: ' + d.thread));
+    pickPanel.append(el2('div', 'body', d.body || (d.type === 'post' ? '(link post — no text)' : '(no text)')));
+    if (pinned) {
+      const note = el2('div', 'note');
+      const a = el2('a', null, 'open on reddit ↗');
+      a.href = d.link;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      note.append(a, document.createTextNode('  ·  click empty space to unpin'));
+      pickPanel.append(note);
+    }
+  }
+  function updatePick(mx, my) {
+    const show = pinId >= 0 ? pinId : hoverId;
+    if (show < 0) { pickPanel.style.display = 'none'; return; }
+    const pinned = pinId >= 0;
+    if (pickPanel._for !== show || pickPanel._pinned !== pinned) {
+      fillPick(show, pinned);
+      pickPanel._for = show;
+      pickPanel._pinned = pinned;
+    }
+    pickPanel.style.display = 'block';
+    pickPanel.style.pointerEvents = pinned ? 'auto' : 'none';
+    let ax, ay;
+    if (pinned) {
+      const a = itemAnchor(pinId);
+      ax = a.x; ay = a.y - R * zoom - 8;
+    } else {
+      ax = mx; ay = my - 14;
+    }
+    pickPanel.style.left = ax + 'px';
+    pickPanel.style.top = Math.max(ay, 10) + 'px';
+  }
+
   // ---- interaction ----
-  let mode = null, lastX = 0, lastY = 0;
+  let mode = null, lastX = 0, lastY = 0, downX = 0, downY = 0;
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     mode = e.button === 2 ? 'rotate' : 'pan';
-    lastX = e.clientX; lastY = e.clientY;
+    downX = lastX = e.clientX; downY = lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
-    if (!mode) return;
-    const dx = e.clientX - lastX, dy = e.clientY - lastY;
-    lastX = e.clientX; lastY = e.clientY;
-    if (mode === 'pan') { pan.x += dx; pan.y -= dy; }
-    else {
-      yaw += dx * 0.008;
-      pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
+    lastMx = e.clientX; lastMy = e.clientY;
+    if (mode) {
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      if (mode === 'pan') { pan.x += dx; pan.y -= dy; }
+      else {
+        yaw += dx * 0.008;
+        pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
+      }
+      reset();
+      return;
     }
-    reset();
+    const id = pick(e.clientX, e.clientY);
+    canvas.style.cursor = id >= 0 ? 'pointer' : '';
+    if (id !== hoverId) {
+      hoverId = id;
+      focusOn(id);
+      reset();
+    } else {
+      updatePick(e.clientX, e.clientY);
+    }
   });
-  canvas.addEventListener('pointerup', () => { mode = null; });
+  canvas.addEventListener('pointerup', e => {
+    const wasPan = mode === 'pan';
+    mode = null;
+    if (wasPan && Math.hypot(e.clientX - downX, e.clientY - downY) < 5) {
+      pinId = pick(e.clientX, e.clientY);   // -1 on empty space = unpin
+      reset();
+    }
+  });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     const f = Math.pow(1.0015, -e.deltaY);
@@ -654,7 +837,10 @@
   window.addEventListener('resize', resize);
   resize();
   loop();
-  window.__pt = { sample: renderSample, spp: () => frame, gl };  // debug hook
+  // debug hook
+  let topIdx = 0;
+  for (let i = 0; i < N; i++) if (items[i].score > items[topIdx].score) topIdx = i;
+  window.__pt = { sample: renderSample, spp: () => frame, gl, anchorOf: itemAnchor, topIdx };
 })();
 </script>
 </body>
