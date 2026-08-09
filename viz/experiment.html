@@ -13,16 +13,21 @@
     position: fixed; top: 10px; right: 14px;
     font-size: 12px; color: #898781; pointer-events: none;
   }
+  #labels { position: fixed; inset: 0; pointer-events: none; }
   #panel {
     position: fixed; left: 14px; bottom: 14px;
     background: rgba(252, 252, 251, 0.92);
     border: 1px solid rgba(11, 11, 11, 0.12);
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 8px 12px;
     font-size: 12px; color: #52514e;
     display: grid; gap: 6px;
     user-select: none;
   }
+  #panelHead { cursor: pointer; font-weight: 600; }
+  #panelHead span { color: #898781; font-weight: 400; }
+  #panel.closed #panelBody { display: none; }
+  #panelBody { display: grid; gap: 6px; }
   .prow { display: flex; align-items: center; gap: 8px; }
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
@@ -34,14 +39,18 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
+<canvas id="labels"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
 <div id="panel">
-  <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="55"></div>
-  <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="14"></div>
-  <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffb877"><input type="range" id="cSunI" min="0" max="4" step="0.05" value="2.6"></div>
-  <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#9db4dd"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.55"></div>
-  <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
-  <div class="prow"><span>wall</span><input type="color" id="cWall" value="#eeeeee"></div>
+  <div id="panelHead">lighting <span id="panelArrow">▾</span></div>
+  <div id="panelBody">
+    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="55"></div>
+    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="14"></div>
+    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#ffb877"><input type="range" id="cSunI" min="0" max="4" step="0.05" value="2.6"></div>
+    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#9db4dd"><input type="range" id="cSkyI" min="0" max="2" step="0.05" value="0.55"></div>
+    <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
+    <div class="prow"><span>wall</span><input type="color" id="cWall" value="#eeeeee"></div>
+  </div>
 </div>
 <script src="data.js"></script>
 <script>
@@ -436,9 +445,69 @@
     requestAnimationFrame(loop);
   }
 
-  const reset = () => { frame = 0; };
+  const reset = () => { frame = 0; drawLabels(); };
   for (const id in ctl) {
     ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
+  }
+
+  // ---- panel toggle ----
+  const panel = document.getElementById('panel');
+  const panelArrow = document.getElementById('panelArrow');
+  const setPanel = closed => {
+    panel.classList.toggle('closed', closed);
+    panelArrow.textContent = closed ? '▸' : '▾';
+    localStorage.setItem('pt-panel-closed', closed ? '1' : '0');
+  };
+  document.getElementById('panelHead').addEventListener('click', () =>
+    setPanel(!panel.classList.contains('closed')));
+  if (localStorage.getItem('pt-panel-closed') === '1') setPanel(true);
+
+  // ---- axis labels, projected through the same camera onto an overlay ----
+  const lcv = document.getElementById('labels');
+  const lctx = lcv.getContext('2d');
+  const wxOf = xu => 40 + kx0 * xu - W0 / 2;                 // layout-x -> world
+  const wyOf = yu => H0 / 2 - (40 + ky0 * yu);               // layout-y -> world
+  const yuOf = v => (ymax - symlog(v)) / (ymax - ymin) * 1000;
+  function project(x, y, z) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const x1 = cy * x + sy * z;
+    const z1 = -sy * x + cy * z;
+    const y1 = cp * y - sp * z1;
+    return { x: x1 * zoom + W / 2 + pan.x, y: H - (y1 * zoom + H / 2 + pan.y) };
+  }
+  function labelText(p, text, align) {
+    if (p.x < -60 || p.x > W + 60 || p.y < -20 || p.y > H + 20) return;
+    lctx.textAlign = align;
+    lctx.strokeText(text, p.x, p.y);
+    lctx.fillText(text, p.x, p.y);
+  }
+  function drawLabels() {
+    const dpr2 = window.devicePixelRatio || 1;
+    lctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+    lctx.clearRect(0, 0, W, H);
+    lctx.font = '11px system-ui, sans-serif';
+    lctx.textBaseline = 'middle';
+    lctx.fillStyle = '#898781';
+    lctx.strokeStyle = 'rgba(252, 252, 251, 0.75)';
+    lctx.lineWidth = 3;
+    const xL = wxOf(0), yB = wyOf(1000);
+    // score ticks along the left edge of the wall
+    for (const v of [10000, 1000, 100, 10, 1, 0, -1, -10, -100]) {
+      const sl = symlog(v);
+      if (sl > ymax || sl < ymin) continue;
+      const lbl = Math.abs(v) >= 1000 ? (v / 1000) + 'k' : String(v);
+      labelText(project(xL - 14, wyOf(yuOf(v)), 0), lbl, 'right');
+    }
+    // year ticks along the bottom edge
+    const y0 = new Date(t0).getUTCFullYear() + 1, y1 = new Date(t1).getUTCFullYear();
+    for (let y = y0; y <= y1; y++) {
+      const t = Date.UTC(y, 0, 1);
+      labelText(project(wxOf((t - t0) / (t1 - t0) * 2000), yB - 20, 0), String(y), 'center');
+    }
+    labelText(project(0, yB - 44, 0), 'time →', 'center');
+    // axis title above the top score tick
+    labelText(project(xL - 14, wyOf(-24), 0), 'score', 'right');
   }
 
   // ---- interaction ----
@@ -475,6 +544,9 @@
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = W;      // trace at css resolution; hi-dpi would double cost
     canvas.height = H;
+    const dpr2 = window.devicePixelRatio || 1;
+    lcv.width = Math.round(W * dpr2);
+    lcv.height = Math.round(H * dpr2);
     mkTargets();
     reset();
   }
