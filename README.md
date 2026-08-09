@@ -2,6 +2,8 @@
 
 **[View the live visualization](https://gregbahm.github.io/RedditData/)**
 
+![Path-traced 3D view of my Reddit posting history](gallery/BeautyShot.png)
+
 A visualizer for my personal Reddit history (posts and comments with score data).
 
 ## Using the visualizer
