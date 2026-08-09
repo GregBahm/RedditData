@@ -78,6 +78,7 @@
     cursor: pointer;
   }
   .tab:hover { color: var(--text-primary); }
+  a.tab { text-decoration: none; display: inline-flex; align-items: center; }
   .tab.active {
     background: var(--surface-1);
     border-color: var(--border);
@@ -217,6 +218,7 @@
       <nav class="tabs">
         <button class="tab" id="tabDist">Score distribution</button>
         <button class="tab" id="tabLdist">Length distribution</button>
+        <a class="tab" id="tab3d" href="experiment.html">Posts in 3D</a>
       </nav>
     </div>
   </div>
