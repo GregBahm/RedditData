@@ -16,8 +16,7 @@
     --baseline: #c3c2b7;
     --border: rgba(11,11,11,0.10);
     --dot: #898781;
-    --record-high: #2a78d6;
-    --record-low: #e34948;
+    --accent: #2a78d6;
     --ov-freq: #eb6834;
     --ov-net: #1baf7a;
     --ov-pct: #4a3aa7;
@@ -35,8 +34,7 @@
       --baseline: #383835;
       --border: rgba(255,255,255,0.10);
       --dot: #898781;
-      --record-high: #3987e5;
-      --record-low: #e66767;
+      --accent: #3987e5;
       --ov-freq: #d95926;
       --ov-net: #199e70;
       --ov-pct: #9085e9;
@@ -166,19 +164,10 @@
   }
   #detail .score { font-size: 20px; font-weight: 600; }
   #detail .meta .k { color: var(--text-secondary); }
-  #detail .badge {
-    font-size: 12px;
-    font-weight: 600;
-    padding: 1px 8px;
-    border-radius: 10px;
-    color: #fff;
-  }
-  #detail .badge.high { background: var(--record-high); }
-  #detail .badge.low { background: var(--record-low); }
   #detail .title { font-weight: 600; margin-bottom: 4px; }
   #detail .thread { font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
   #detail .body { color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
-  #detail a { color: var(--record-high); text-decoration: none; }
+  #detail a { color: var(--accent); text-decoration: none; }
   #detail a:hover { text-decoration: underline; }
   #detail .pin-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
 </style>
@@ -195,8 +184,6 @@
   <span class="sub" id="subtitle">loading…</span>
   <div class="controls">
     <div class="legend" id="legendMain">
-      <span><span class="swatch" style="background:var(--record-high)"></span>record high</span>
-      <span><span class="swatch" style="background:var(--record-low)"></span>record low</span>
       <span><span class="swatch sq" style="background:var(--dot)"></span>post</span>
       <span><span class="swatch" style="background:var(--dot)"></span>comment</span>
     </div>
@@ -235,15 +222,6 @@
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
   })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
   items.sort((a, b) => a.time - b.time);
-
-  // running record-high / record-low flags, chronological
-  let hi = -Infinity, lo = Infinity;
-  for (const d of items) {
-    d.recordHigh = d.score > hi;
-    d.recordLow = d.score < lo;
-    if (d.score > hi) hi = d.score;
-    if (d.score < lo) lo = d.score;
-  }
 
   const t0 = items[0].time, t1 = items[items.length - 1].time;
 
@@ -323,8 +301,7 @@
   function readColors() {
     C = {
       surface: css('--surface-1'), grid: css('--gridline'), baseline: css('--baseline'),
-      muted: css('--text-muted'), dot: css('--dot'),
-      high: css('--record-high'), low: css('--record-low'),
+      muted: css('--text-muted'), dot: css('--dot'), accent: css('--accent'),
       ovFreq: css('--ov-freq'), ovNet: css('--ov-net'), ovPct: css('--ov-pct'),
       ovAvg: css('--ov-avg'),
     };
@@ -468,7 +445,7 @@
 
     if (mode === 'dist' || mode === 'ldist') {
       // rank-distribution line: one polyline through every item, highest value first
-      ctx.strokeStyle = C.high;
+      ctx.strokeStyle = C.accent;
       ctx.lineWidth = 2;
       ctx.lineJoin = ctx.lineCap = 'round';
       ctx.beginPath();
@@ -480,13 +457,12 @@
       }
       ctx.stroke();
     } else {
-    // pass 1: ordinary dots; in score mode the records are drawn on top in pass 2
+    // scatter dots (Posts by Score / Posts by Length)
     ctx.globalAlpha = 0.55;
     ctx.fillStyle = C.dot;
     for (const d of activeList()) {
       const px = xPix(xv(d)), py = yPix(yv(d));
       d.px = px; d.py = py;
-      if (mode === 'time' && (d.recordHigh || d.recordLow)) continue;
       if (px < M.left - 6 || px > W - M.right + 6 || py < M.top - 6 || py > H - M.bottom + 6) continue;
       if (d.type === 'post') {
         ctx.fillRect(px - 3, py - 3, 6, 6);
@@ -521,31 +497,6 @@
       }
       ctx.stroke();
     }
-
-    for (const d of items) {
-      if (!d.recordHigh && !d.recordLow) continue;
-      const px = d.px, py = d.py;
-      if (px < M.left - 8 || px > W - M.right + 8 || py < M.top - 8 || py > H - M.bottom + 8) continue;
-      const color = d.recordHigh ? C.high : C.low;
-      // surface ring
-      ctx.fillStyle = C.surface;
-      const R = d.type === 'post' ? 5 : 4.2;
-      if (d.type === 'post') {
-        ctx.fillRect(px - R - 2, py - R - 2, (R + 2) * 2, (R + 2) * 2);
-        ctx.fillStyle = color;
-        ctx.fillRect(px - R, py - R, R * 2, R * 2);
-      } else {
-        ctx.beginPath(); ctx.arc(px, py, R + 2, 0, 6.2832); ctx.fill();
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(px, py, R, 0, 6.2832); ctx.fill();
-      }
-      // first item can be both records: red ring inside blue
-      if (d.recordHigh && d.recordLow) {
-        ctx.strokeStyle = C.low;
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(px, py, R - 1, 0, 6.2832); ctx.stroke();
-      }
-    }
     } // end mode === 'time'
 
     // highlight hovered / pinned
@@ -553,7 +504,7 @@
       if (!d) continue;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.strokeStyle = d.recordLow && !d.recordHigh ? C.low : d.recordHigh ? C.high : C.muted;
+      ctx.strokeStyle = C.muted;
       ctx.arc(d.px, d.py, 8, 0, 6.2832);
       ctx.stroke();
     }
@@ -581,15 +532,11 @@
     meta.append(el('span', 'k', d.type));
     if (mode === 'dist') {
       meta.append(el('span', 'k', 'rank #' + d.drank.toLocaleString() + ' of ' + distItems.length.toLocaleString()));
-      if (d.recordHigh) meta.append(el('span', 'badge high', 'record high'));
-      if (d.recordLow) meta.append(el('span', 'badge low', 'record low'));
     } else if (mode === 'ldist') {
       meta.append(el('span', 'k', 'rank #' + d.lrank.toLocaleString() + ' of ' + lenItems.length.toLocaleString()));
       meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
-    } else {
-      if (mode === 'ltime') meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
-      if (d.recordHigh) meta.append(el('span', 'badge high', 'record high'));
-      if (d.recordLow) meta.append(el('span', 'badge low', 'record low'));
+    } else if (mode === 'ltime') {
+      meta.append(el('span', 'k', d.len.toLocaleString() + ' chars'));
     }
     detail.append(meta);
     if (d.title) detail.append(el('div', 'title', d.title));
