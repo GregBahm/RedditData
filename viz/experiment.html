@@ -53,6 +53,8 @@
     <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ededed"></div>
     <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#eeeeee"></div>
     <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#eeeeee"></div>
+    <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#898781"></div>
+    <div class="prow"><span>perspective</span><input type="checkbox" id="cPersp"></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
     <div id="dofRows">
       <div class="prow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="100"></div>
@@ -96,6 +98,11 @@
       bins.set(key, n + 1);
     }
   }
+
+  // perspective eye distance: comfortably beyond the tallest tower
+  let maxPz = 0;
+  for (let i = 0; i < N; i++) maxPz = Math.max(maxPz, pz[i]);
+  const EYE_D = Math.max(2500, maxPz + 600);
 
   // ---- uniform grid over XY for ray traversal ----
   // spheres are inserted into every cell they overlap, so DDA never misses.
@@ -184,6 +191,7 @@
   uniform vec4 uRect;                // canvas rectangle: min x, min y, max x, max y
   uniform float uDofK;               // aperture strength (0 = pinhole)
   uniform float uFocusZ;             // camera-space depth of the focal plane
+  uniform float uEyeZ;               // 0 = orthographic; else perspective eye depth
 
   uint pcg(inout uint s) {
     s = s * 747796405u + 2891336453u;
@@ -288,16 +296,32 @@
     // orthographic camera: jittered pixel -> camera plane -> world
     vec2 pix = gl_FragCoord.xy + vec2(rnd(seed), rnd(seed)) - 0.5;
     vec2 sc = (pix - 0.5 * uSize - uPan) / uZoom;
-    vec3 oc = vec3(sc, 6000.0);
-    vec3 dc = vec3(0.0, 0.0, -1.0);
+    // aperture-disk sample, shared by both camera models (zero = pinhole)
+    vec2 ap = vec2(0.0);
     if (uDofK > 0.0) {
+      float r1 = rnd(seed), r2 = rnd(seed);
+      ap = sqrt(r1) * vec2(cos(6.2831853 * r2), sin(6.2831853 * r2));
+    }
+    vec3 oc, dc;
+    if (uEyeZ > 0.5) {
+      // perspective: eye on the view axis; framing matches ortho at the wall
+      float D = uEyeZ;
+      float fz = min(uFocusZ, D - 100.0);
+      vec3 E = vec3(-uPan / uZoom, D);
+      vec3 P0 = vec3(sc, 0.0);
+      vec3 target = uDofK > 0.0 ? mix(E, P0, (D - fz) / D) : P0;
+      E.xy += ap * uDofK * (D - fz);
+      oc = E;
+      dc = normalize(target - E);
+    } else if (uDofK > 0.0) {
       // telecentric thin lens: jitter across the aperture disk, keep the
       // ray passing through this pixel's point on the focal plane, so blur
       // grows linearly with distance from that plane
-      float r1 = rnd(seed), r2 = rnd(seed);
-      vec2 ap = sqrt(r1) * vec2(cos(6.2831853 * r2), sin(6.2831853 * r2));
       oc = vec3(sc + ap * uDofK * (6000.0 - uFocusZ), 6000.0);
       dc = normalize(vec3(-ap * uDofK, -1.0));
+    } else {
+      oc = vec3(sc, 6000.0);
+      dc = vec3(0.0, 0.0, -1.0);
     }
     vec3 o = uCamToWorld * oc;
     vec3 d = normalize(uCamToWorld * dc);
@@ -395,7 +419,7 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cDofOn', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPersp', 'cDofOn', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -421,6 +445,7 @@
     light.albB = hex2lin(ctl.cBack.value);
     light.dofK = ctl.cDofOn.checked ? +ctl.cAper.value : 0;
     light.focusZ = +ctl.cFocus.value;
+    light.persp = ctl.cPersp.checked;
     document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
   }
   readLight();
@@ -461,6 +486,7 @@
     gl.uniform4f(U('uRect'), wxOf(0), wyOf(1000), wxOf(2000), wyOf(0));
     gl.uniform1f(U('uDofK'), light.dofK);
     gl.uniform1f(U('uFocusZ'), light.focusZ);
+    gl.uniform1f(U('uEyeZ'), light.persp ? EYE_D : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
@@ -508,30 +534,41 @@
   const wxOf = xu => 40 + kx0 * xu - W0 / 2;                 // layout-x -> world
   const wyOf = yu => H0 / 2 - (40 + ky0 * yu);               // layout-y -> world
   const yuOf = v => (ymax - symlog(v)) / (ymax - ymin) * 1000;
-  function labelText(wx, wy, text, align) {
-    lctx.textAlign = align;
-    lctx.strokeText(text, wx, -wy);
-    lctx.fillText(text, wx, -wy);
-  }
   function drawLabels() {
     const dpr2 = window.devicePixelRatio || 1;
     lctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
     lctx.clearRect(0, 0, W, H);
-    // the wall plane (z=0) maps to the screen by a plain affine transform
-    // under this orthographic camera, so set it on the context and draw the
-    // labels in wall coordinates: they rotate/shear/scale like painted text.
-    // (u, v) = (world x, -world y) so glyphs stay y-down in glyph space.
+    // the wall plane (z=0) maps to the screen affinely under the ortho
+    // camera; under perspective it's projective, so each label gets its
+    // own transform: exact projected anchor + locally scaled wall basis.
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
     const cp = Math.cos(pitch), sp = Math.sin(pitch);
     const a = cy * zoom, b = -sp * sy * zoom;
     const d = cp * zoom;
     const e = W / 2 + pan.x, f = H / 2 - pan.y;
-    lctx.setTransform(dpr2 * a, dpr2 * b, 0, dpr2 * d, dpr2 * e, dpr2 * f);
+    const persp = light.persp;
+    function labelText(wx, wy, text, align) {
+      let ax, ay, s = 1;
+      if (persp) {
+        // camera-space wall point and its perspective weight
+        const qx = cy * wx, qy = cp * wy + sp * sy * wx, qz = sp * wy - cp * sy * wx;
+        if (qz > EYE_D - 100) return;
+        s = EYE_D / (EYE_D - qz);
+        const Ex = -pan.x / zoom, Ey = -pan.y / zoom;
+        const pgx = (Ex + (qx - Ex) * s) * zoom + W / 2 + pan.x;
+        const pgy = (Ey + (qy - Ey) * s) * zoom + H / 2 + pan.y;
+        ax = pgx; ay = H - pgy;
+      } else {
+        ax = a * wx + e;
+        ay = b * wx - d * wy + f;
+      }
+      lctx.setTransform(dpr2 * a * s, dpr2 * b * s, 0, dpr2 * d * s, dpr2 * ax, dpr2 * ay);
+      lctx.textAlign = align;
+      lctx.fillText(text, 0, 0);
+    }
     lctx.font = '17px system-ui, sans-serif';   // world units: scales with zoom
     lctx.textBaseline = 'middle';
-    lctx.fillStyle = '#898781';
-    lctx.strokeStyle = 'rgba(252, 252, 251, 0.75)';
-    lctx.lineWidth = 4;
+    lctx.fillStyle = ctl.cLbl.value;
     const xL = wxOf(0), yB = wyOf(1000);
     // score ticks along the left edge of the wall
     for (const v of [10000, 1000, 100, 10, 1, 0, -1, -10, -100]) {
