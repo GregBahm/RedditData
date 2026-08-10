@@ -1148,6 +1148,66 @@
     g.globalAlpha = 1;
   }
 
+  // minimal single-track MP4 writer around WebCodecs H.264 output
+  const mp4Concat = arrs => {
+    let n = 0;
+    for (const a of arrs) n += a.length;
+    const out = new Uint8Array(n);
+    let o = 0;
+    for (const a of arrs) { out.set(a, o); o += a.length; }
+    return out;
+  };
+  const mp4U32s = (...vals) => {
+    const out = new Uint8Array(vals.length * 4);
+    const dv = new DataView(out.buffer);
+    vals.forEach((v, i) => dv.setUint32(i * 4, v >>> 0));
+    return out;
+  };
+  const mp4U16s = (...vals) => {
+    const out = new Uint8Array(vals.length * 2);
+    const dv = new DataView(out.buffer);
+    vals.forEach((v, i) => dv.setUint16(i * 2, v & 0xffff));
+    return out;
+  };
+  const mp4Tag = s => new Uint8Array([...s].map(c => c.charCodeAt(0)));
+  const mp4Box = (type, ...payload) => {
+    const body = mp4Concat(payload);
+    const out = new Uint8Array(8 + body.length);
+    new DataView(out.buffer).setUint32(0, out.length);
+    out.set(mp4Tag(type), 4);
+    out.set(body, 8);
+    return out;
+  };
+  function buildMp4(samples, keys, w, h, fps, avcC) {
+    const TS = 60000, SD = Math.round(TS / fps);
+    const n = samples.length, dur = n * SD;
+    const matrix = mp4U32s(0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000);
+    const ftyp = mp4Box('ftyp', mp4Tag('isom'), mp4U32s(512), mp4Tag('isomiso2avc1mp41'));
+    const mdat = mp4Box('mdat', ...samples);
+    const mvhd = mp4Box('mvhd', mp4U32s(0, 0, 0, TS, dur, 0x10000),
+      mp4U16s(0x100, 0), mp4U32s(0, 0), matrix, mp4U32s(0, 0, 0, 0, 0, 0), mp4U32s(2));
+    const tkhd = mp4Box('tkhd', mp4U32s(3, 0, 0, 1, 0, dur, 0, 0),
+      mp4U16s(0, 0, 0, 0), matrix, mp4U32s(w << 16, h << 16));
+    const mdhd = mp4Box('mdhd', mp4U32s(0, 0, 0, TS, dur), mp4U16s(0x55c4, 0));
+    const hdlr = mp4Box('hdlr', mp4U32s(0, 0), mp4Tag('vide'), mp4U32s(0, 0, 0),
+      mp4Tag('VideoHandler'), new Uint8Array(1));
+    const avc1 = mp4Box('avc1', new Uint8Array(6), mp4U16s(1, 0, 0),
+      mp4U32s(0, 0, 0), mp4U16s(w, h), mp4U32s(0x480000, 0x480000, 0),
+      mp4U16s(1), new Uint8Array(32), mp4U16s(24, 0xffff), mp4Box('avcC', avcC));
+    const stbl = mp4Box('stbl',
+      mp4Box('stsd', mp4U32s(0, 1), avc1),
+      mp4Box('stts', mp4U32s(0, 1, n, SD)),
+      mp4Box('stss', mp4U32s(0, keys.length, ...keys)),
+      mp4Box('stsc', mp4U32s(0, 1, 1, n, 1)),
+      mp4Box('stsz', mp4U32s(0, 0, n, ...samples.map(s => s.length))),
+      mp4Box('stco', mp4U32s(0, 1, ftyp.length + 8)));
+    const minf = mp4Box('minf', mp4Box('vmhd', mp4U32s(1), mp4U16s(0, 0, 0, 0)),
+      mp4Box('dinf', mp4Box('dref', mp4U32s(0, 1), mp4Box('url ', mp4U32s(1)))), stbl);
+    const moov = mp4Box('moov', mvhd,
+      mp4Box('trak', tkhd, mp4Box('mdia', mdhd, hdlr, minf)));
+    return mp4Concat([ftyp, mdat, moov]);
+  }
+
   async function exportFrames(rec, dir) {
     exporting = true;
     cancelExport = false;
@@ -1158,8 +1218,38 @@
     const t0r = rec[0].t;
     const total = Math.max(1, Math.round((rec[rec.length - 1].t - t0r) / 1000 * FPS));
     const ec = document.createElement('canvas');
-    ec.width = W; ec.height = H;
+    ec.width = W & ~1;      // even dimensions, required for h.264 4:2:0
+    ec.height = H & ~1;
     const ectx = ec.getContext('2d');
+
+    // h.264 encoder alongside the PNG masters, muxed to mp4 at the end
+    let venc = null, vchunks = [], vkeys = [], avcCDesc = null, vencErr = null;
+    if (window.VideoEncoder) {
+      for (const codec of ['avc1.640034', 'avc1.640033', 'avc1.64002a', 'avc1.4d4033']) {
+        const cfg = {
+          codec, width: ec.width, height: ec.height,
+          bitrate: 20_000_000, framerate: FPS, avc: { format: 'avc' },
+        };
+        try {
+          if ((await VideoEncoder.isConfigSupported(cfg)).supported) {
+            venc = new VideoEncoder({
+              output: (chunk, meta) => {
+                if (meta && meta.decoderConfig && meta.decoderConfig.description) {
+                  avcCDesc = new Uint8Array(meta.decoderConfig.description);
+                }
+                const buf = new Uint8Array(chunk.byteLength);
+                chunk.copyTo(buf);
+                if (chunk.type === 'key') vkeys.push(vchunks.length + 1);
+                vchunks.push(buf);
+              },
+              error: e => { vencErr = e; },
+            });
+            venc.configure(cfg);
+            break;
+          }
+        } catch (e) { venc = null; }
+      }
+    }
     // rAF with a timeout fallback so export keeps crawling forward even
     // if the window is briefly covered (rAF pauses in hidden windows)
     const raf = () => new Promise(r => { requestAnimationFrame(() => r()); setTimeout(r, 250); });
@@ -1191,6 +1281,11 @@
       renderSample();               // fresh backbuffer in this task
       ectx.drawImage(canvas, 0, 0);
       drawPanelInto(ectx, ovState);
+      if (venc && !vencErr) {
+        const vf = new VideoFrame(ec, { timestamp: fi * 1e6 / FPS, duration: 1e6 / FPS });
+        venc.encode(vf, { keyFrame: fi % 120 === 0 });
+        vf.close();
+      }
       const blob = await new Promise(r => ec.toBlob(r, 'image/png'));
       const fh = await dir.getFileHandle('frame_' + String(fi + 1).padStart(4, '0') + '.png', { create: true });
       const wr = await fh.createWritable();
@@ -1199,12 +1294,31 @@
       const el = (performance.now() - tStart) / 1000;
       recInfo.textContent = `rendering ${fi + 1}/${total} · eta ${fmtTime(el / (fi + 1) * (total - fi - 1))} · keep window visible`;
     }
+    // mux the encoded video and drop it next to the frames
+    let videoNote = '';
+    if (venc) {
+      try {
+        if (!cancelExport && !vencErr) {
+          recInfo.textContent = 'encoding video…';
+          await venc.flush();
+          if (avcCDesc && vchunks.length) {
+            const mp4 = buildMp4(vchunks, vkeys, ec.width, ec.height, FPS, avcCDesc);
+            const fh = await dir.getFileHandle('recording.mp4', { create: true });
+            const wr = await fh.createWritable();
+            await wr.write(mp4);
+            await wr.close();
+            videoNote = ' · recording.mp4';
+          }
+        }
+        venc.close();
+      } catch (e) { videoNote = ' · video encode failed'; }
+    }
     ovState = null;
     pan.x = saved.px; pan.y = saved.py;
     zoom = saved.zoom; yaw = saved.yaw; pitch = saved.pitch;
     exporting = false;
     updateRecUI();
-    recInfo.textContent = cancelExport ? `cancelled · ${fi} frames written` : `done · ${total} frames · ${FPS} fps`;
+    recInfo.textContent = (cancelExport ? `cancelled · ${fi} frames written` : `done · ${total} frames · ${FPS} fps`) + videoNote;
     frame = 0;
   }
 
