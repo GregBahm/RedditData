@@ -607,7 +607,8 @@
       for (let k = 0; k < SBANDS - 1; k++) if (k !== sdistSelBand) ord.push(k);
       const hasFocus = sdistHoverBand >= 0 || sdistSelBand >= 0;
       for (const k of ord) {
-        ctx.globalAlpha = hasFocus && k !== sdistHoverBand && k !== sdistSelBand ? 0.5 : 1;
+        // unfocused bands sit at 10% opacity: 90% of the way to the background
+        ctx.globalAlpha = hasFocus && k !== sdistHoverBand && k !== sdistSelBand ? 0.1 : 1;
         ctx.fillStyle = SUB_COLORS[k];
         let seg = [];
         let best = { share: 0 };
