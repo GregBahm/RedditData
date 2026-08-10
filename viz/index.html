@@ -192,6 +192,9 @@
   #detail a { color: var(--accent); text-decoration: none; }
   #detail a:hover { text-decoration: underline; }
   #detail .pin-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+  .sdWrap { display: flex; gap: 18px; align-items: center; height: 100%; }
+  .sdPie { width: 144px; height: 144px; flex: none; }
+  .sdTxt { min-width: 0; }
   #tip {
     position: fixed; display: none;
     transform: translate(-50%, -100%);
@@ -318,6 +321,8 @@
   ).concat(['#a5a5a0']);
   const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
   let sdistSm = null;   // smoothed band series, cached per draw for hover
+  const allTimeCounts = topSubs.map(s => subTotals.get(s));
+  allTimeCounts.push(items.length - allTimeCounts.reduce((a, b) => a + b, 0));
 
   // draggable percentile marker lines in the scatter views
   const pctile = (arr, p) => arr[Math.floor(p * (arr.length - 1))];
@@ -479,7 +484,6 @@
   let hovered = null, pinned = null;
   let overlayPts = [];    // per drawn overlay: {pts:[{x,y,v}], fmt, color}
   let overlayHover = null; // {x, y, text, color}
-  let sdistRightLabels = []; // band label list along the right edge
 
   function draw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -538,12 +542,10 @@
       const EPS = 1e-4;
       const cumShare = new Array(nW).fill(0);
       const labelSpots = [];
-      sdistRightLabels = [];
       for (let k = 0; k < SBANDS; k++) {
         ctx.fillStyle = SUB_COLORS[k];
         let seg = [];
         let best = { share: 0 };
-        let endY = null;
         const flush = () => {
           if (seg.length > 1) {
             ctx.beginPath();
@@ -562,16 +564,14 @@
           const top = bot + share;
           cumShare[w] = top;
           const x = xPix(weeks[w].t);
-          const yb = yPix(bot), yt = yPix(top);
-          seg.push({ x, yb, yt });
-          endY = (yb + yt) / 2;
+          seg.push({ x, yb: yPix(bot), yt: yPix(top) });
           if (share > best.share && x > M.left + 30 && x < W - M.right - 30) {
             best = { share, x, y: yPix((bot + top) / 2) };
           }
         }
         flush();
-        if (best.share > 0.055) labelSpots.push({ ...best, name: subName(k) });
-        if (endY !== null) sdistRightLabels.push({ y: endY, name: subName(k), color: SUB_COLORS[k] });
+        // in-band labels for the top 10 subreddits only
+        if (k < 10 && best.share > 0.04) labelSpots.push({ ...best, name: subName(k) });
       }
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -753,25 +753,6 @@
       ctx.stroke();
     }
     ctx.restore();
-
-    // band label list along the right edge, nudged apart so it reads as a
-    // legend ordered by each band's final stack position
-    if (mode === 'sdist' && sdistRightLabels.length) {
-      const g = sdistRightLabels.sort((a, b) => a.y - b.y);
-      const gap = Math.max(10, Math.min(14, (H - M.top - M.bottom) / g.length));
-      for (let i = 1; i < g.length; i++) {
-        if (g[i].y < g[i - 1].y + gap) g[i].y = g[i - 1].y + gap;
-      }
-      ctx.font = '12px system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      for (const L of g) {
-        ctx.fillStyle = L.color;
-        ctx.fillRect(W - M.right + 10, L.y - 4, 8, 8);
-        ctx.fillStyle = C.muted;
-        ctx.fillText(L.name, W - M.right + 24, L.y);
-      }
-    }
   }
 
   // ---- detail panel ----
@@ -859,38 +840,82 @@
     return null;
   }
 
-  // hover readout for the subreddit-distribution bands
+  // subreddit-distribution bottom panel: a pie of the composition, all-time
+  // by default, becoming the hovered week's pie while sweeping the chart
   const tip = document.getElementById('tip');
+  let pieUI = null;
+  function ensurePieUI() {
+    if (pieUI && detail.contains(pieUI.wrap)) return;
+    const wrap = el('div', 'sdWrap');
+    const cv = document.createElement('canvas');
+    cv.width = 288; cv.height = 288;
+    cv.className = 'sdPie';
+    const txt = el('div', 'sdTxt');
+    wrap.append(cv, txt);
+    detail.replaceChildren(wrap);
+    pieUI = { wrap, cv, g: cv.getContext('2d'), txt };
+  }
+  function drawPie(vals, highlightK) {
+    const g = pieUI.g;
+    g.setTransform(2, 0, 0, 2, 0, 0);
+    g.clearRect(0, 0, 144, 144);
+    const total = vals.reduce((a, b) => a + b, 0);
+    if (total <= 0) return;
+    const cx2 = 72, cy2 = 72, R2 = 68;
+    let ang = -Math.PI / 2;
+    for (let k = 0; k < vals.length; k++) {
+      const frac = vals[k] / total;
+      if (frac <= 0) continue;
+      const a2 = ang + frac * Math.PI * 2;
+      g.beginPath();
+      g.moveTo(cx2, cy2);
+      g.arc(cx2, cy2, R2, ang, a2);
+      g.closePath();
+      g.fillStyle = SUB_COLORS[k];
+      g.fill();
+      if (k === highlightK) {
+        g.lineWidth = 2.5;
+        g.strokeStyle = css('--text-primary');
+        g.stroke();
+      }
+      ang = a2;
+    }
+  }
+  function sdistDefault() {
+    ensurePieUI();
+    drawPie(allTimeCounts, -1);
+    pieUI.txt.replaceChildren();
+    const meta = el('div', 'meta');
+    meta.append(el('span', 'score', 'All time'));
+    meta.append(el('span', 'k', items.length.toLocaleString() + ' posts & comments across ' + subTotals.size + ' subreddits'));
+    meta.append(el('span', 'k', 'hover the chart for any week’s pie'));
+    pieUI.txt.append(meta);
+    tip.style.display = 'none';
+  }
   function sdistHover(mx, my, cx, cy) {
-    if (!sdistSm) return;
+    if (!sdistSm) sdistSm = subWeekly.map(a => smoothSeries(a, smoothSigma));
     const t = xInv(mx);
     const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
     const yv2 = yInv(my);
-    if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) {
-      tip.style.display = 'none';
-      showDetail(null, false);
-      return;
-    }
+    if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) { sdistDefault(); return; }
     let total = 0;
     for (let k = 0; k < SBANDS; k++) total += sdistSm[k][w];
-    if (total < 1e-4) {
-      tip.style.display = 'none';
-      showDetail(null, false);
-      return;
-    }
+    if (total < 1e-4) { sdistDefault(); return; }
     let cum = 0, band = 0, share = 0;
     for (let k = 0; k < SBANDS; k++) {
       share = sdistSm[k][w] / total;
       cum += share;
       if (yv2 <= cum || k === SBANDS - 1) { band = k; break; }
     }
-    detail.replaceChildren();
+    ensurePieUI();
+    drawPie(sdistSm.map(a => a[w]), band);
+    pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', subName(band)));
     meta.append(el('span', 'k', Math.round(share * 100) + '% of posts'));
     meta.append(el('span', 'k', 'week of ' + new Date(weeks[w].t - MS_WEEK / 2).toLocaleDateString(undefined, { dateStyle: 'medium' })));
     meta.append(el('span', 'k', `${subWeekly[band][w]} of ${weeks[w].count} that week unsmoothed`));
-    detail.append(meta);
+    pieUI.txt.append(meta);
     tip.textContent = subName(band) + ' · ' + Math.round(share * 100) + '%';
     tip.style.display = 'block';
     tip.style.left = cx + 'px';
@@ -968,7 +993,8 @@
     hovered = null;
     overlayHover = null;
     tip.style.display = 'none';
-    if (!pinned) showDetail(null, false);
+    if (mode === 'sdist') sdistDefault();
+    else if (!pinned) showDetail(null, false);
     requestAnimationFrame(draw);
   });
   canvas.addEventListener('wheel', e => {
@@ -1091,7 +1117,6 @@
     tabSdist.style.display = m === 'sdist' ? 'none' : '';
     document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist' || m === 'sdist');
     scaleToggle.style.display = m === 'sdist' ? 'none' : '';
-    M.right = m === 'sdist' ? 158 : 24;   // room for the band label list
     document.getElementById('tip').style.display = 'none';
     updateSmoothRow();
     toggleLabel();
@@ -1104,6 +1129,7 @@
       showDetail(null, false);
       view = { kx: 1, ky: 1, tx: 0, ty: 0 };
     }
+    if (m === 'sdist') sdistDefault();
     requestAnimationFrame(draw);
   }
   ryScore.addEventListener('change', () => setMode('time'));
