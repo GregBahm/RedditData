@@ -191,6 +191,19 @@
   #detail a { color: var(--accent); text-decoration: none; }
   #detail a:hover { text-decoration: underline; }
   #detail .pin-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+  #tip {
+    position: fixed; display: none;
+    transform: translate(-50%, -100%);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+    color: var(--text-primary);
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 10;
+  }
 </style>
 </head>
 <body>
@@ -229,6 +242,7 @@
 </div>
 <div id="divider" title="Drag to resize"></div>
 <div id="detail"><span class="placeholder">Hover over a dot to see the post here.</span></div>
+<div id="tip"></div>
 
 <script src="data.js"></script>
 <script>
@@ -287,7 +301,7 @@
   // top subreddits get their own band, the rest pool into "other"
   const subTotals = new Map();
   for (const d of items) subTotals.set(d.sub, (subTotals.get(d.sub) || 0) + 1);
-  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(e => e[0]);
+  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(e => e[0]);
   const subIndex = new Map(topSubs.map((s, i) => [s, i]));
   const SBANDS = topSubs.length + 1;
   const subWeekly = Array.from({ length: SBANDS }, () => new Array(weeks.length).fill(0));
@@ -297,8 +311,10 @@
     subWeekly[k][w]++;
   }
   const SUB_COLORS = [
-    '#4e79a7', '#e15759', '#f28e2b', '#59a14f', '#b07aa1', '#76b7b2',
-    '#edc948', '#ff9da7', '#9c755f', '#86bcb6', '#d37295', '#a0cbe8',
+    '#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2',
+    '#f1ce63', '#d37295', '#499894', '#9d7660', '#a0cbe8', '#ffbe7d',
+    '#8cd17d', '#ff9d9a', '#d4a6c8', '#86bcb6', '#b6992d', '#fabfd2',
+    '#79706e', '#d7b5a6',
   ].slice(0, topSubs.length).concat(['#a5a5a0']);
   const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
   let sdistSm = null;   // smoothed band series, cached per draw for hover
@@ -463,6 +479,7 @@
   let hovered = null, pinned = null;
   let overlayPts = [];    // per drawn overlay: {pts:[{x,y,v}], fmt, color}
   let overlayHover = null; // {x, y, text, color}
+  let sdistRightLabels = []; // band label list along the right edge
 
   function draw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -521,10 +538,12 @@
       const EPS = 1e-4;
       const cumShare = new Array(nW).fill(0);
       const labelSpots = [];
+      sdistRightLabels = [];
       for (let k = 0; k < SBANDS; k++) {
         ctx.fillStyle = SUB_COLORS[k];
         let seg = [];
         let best = { share: 0 };
+        let endY = null;
         const flush = () => {
           if (seg.length > 1) {
             ctx.beginPath();
@@ -543,13 +562,16 @@
           const top = bot + share;
           cumShare[w] = top;
           const x = xPix(weeks[w].t);
-          seg.push({ x, yb: yPix(bot), yt: yPix(top) });
+          const yb = yPix(bot), yt = yPix(top);
+          seg.push({ x, yb, yt });
+          endY = (yb + yt) / 2;
           if (share > best.share && x > M.left + 30 && x < W - M.right - 30) {
             best = { share, x, y: yPix((bot + top) / 2) };
           }
         }
         flush();
         if (best.share > 0.055) labelSpots.push({ ...best, name: subName(k) });
+        if (endY !== null) sdistRightLabels.push({ y: endY, name: subName(k), color: SUB_COLORS[k] });
       }
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -731,6 +753,24 @@
       ctx.stroke();
     }
     ctx.restore();
+
+    // band label list along the right edge, nudged apart so it reads as a
+    // legend ordered by each band's final stack position
+    if (mode === 'sdist' && sdistRightLabels.length) {
+      const g = sdistRightLabels.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < g.length; i++) {
+        if (g[i].y < g[i - 1].y + 14) g[i].y = g[i - 1].y + 14;
+      }
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (const L of g) {
+        ctx.fillStyle = L.color;
+        ctx.fillRect(W - M.right + 10, L.y - 4, 8, 8);
+        ctx.fillStyle = C.muted;
+        ctx.fillText(L.name, W - M.right + 24, L.y);
+      }
+    }
   }
 
   // ---- detail panel ----
@@ -819,15 +859,24 @@
   }
 
   // hover readout for the subreddit-distribution bands
-  function sdistHover(mx, my) {
+  const tip = document.getElementById('tip');
+  function sdistHover(mx, my, cx, cy) {
     if (!sdistSm) return;
     const t = xInv(mx);
     const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
     const yv2 = yInv(my);
-    if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) { showDetail(null, false); return; }
+    if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) {
+      tip.style.display = 'none';
+      showDetail(null, false);
+      return;
+    }
     let total = 0;
     for (let k = 0; k < SBANDS; k++) total += sdistSm[k][w];
-    if (total < 1e-4) { showDetail(null, false); return; }
+    if (total < 1e-4) {
+      tip.style.display = 'none';
+      showDetail(null, false);
+      return;
+    }
     let cum = 0, band = 0, share = 0;
     for (let k = 0; k < SBANDS; k++) {
       share = sdistSm[k][w] / total;
@@ -841,6 +890,10 @@
     meta.append(el('span', 'k', 'week of ' + new Date(weeks[w].t - MS_WEEK / 2).toLocaleDateString(undefined, { dateStyle: 'medium' })));
     meta.append(el('span', 'k', `${subWeekly[band][w]} of ${weeks[w].count} that week unsmoothed`));
     detail.append(meta);
+    tip.textContent = subName(band) + ' · ' + Math.round(share * 100) + '%';
+    tip.style.display = 'block';
+    tip.style.left = cx + 'px';
+    tip.style.top = (cy - 12) + 'px';
   }
 
   let dragging = false, lastX = 0, lastY = 0, moved = 0, lineDrag = null;
@@ -884,7 +937,7 @@
     }
     if (mode === 'sdist') {
       canvas.style.cursor = '';
-      sdistHover(mx, my);
+      sdistHover(mx, my, e.clientX, e.clientY);
       return;
     }
     canvas.style.cursor = pctLineHit(my) ? 'ns-resize' : '';
@@ -913,6 +966,7 @@
   canvas.addEventListener('pointerleave', () => {
     hovered = null;
     overlayHover = null;
+    tip.style.display = 'none';
     if (!pinned) showDetail(null, false);
     requestAnimationFrame(draw);
   });
@@ -1027,6 +1081,8 @@
     tabSdist.classList.toggle('active', m === 'sdist');
     document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist' || m === 'sdist');
     scaleToggle.style.display = m === 'sdist' ? 'none' : '';
+    M.right = m === 'sdist' ? 158 : 24;   // room for the band label list
+    document.getElementById('tip').style.display = 'none';
     updateSmoothRow();
     toggleLabel();
     computeBase();
