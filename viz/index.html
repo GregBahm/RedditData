@@ -344,6 +344,8 @@
   let sdistSm = null;         // smoothed band series, cached per draw for hover
   let sdistMetric = 'posts';  // 'posts' = post counts, 'score' = point yield
   let sdistNorm = true;       // normalized shares vs absolute stacked values
+  let sdistHoverBand = -1;    // hovered band: others dim toward background
+  let sdistSelBand = -1;      // selected band: pinned to the bottom of the stack
   const allTimeCounts = topSubs.map(s => subTotals.get(s));
   allTimeCounts.push(items.length - allTimeCounts.reduce((a, b) => a + b, 0));
   // score-yield variant of the same aggregation, over the same band set
@@ -599,7 +601,13 @@
       const heightRef = sdistNorm ? 1 : by.max / 1.04;   // for label sizing
       const cumShare = new Array(nW).fill(0);
       const labelSpots = [];
-      for (let k = 0; k < SBANDS - 1; k++) {
+      // a selected band stacks first (bottom); hover/selection dims the rest
+      const ord = [];
+      if (sdistSelBand >= 0) ord.push(sdistSelBand);
+      for (let k = 0; k < SBANDS - 1; k++) if (k !== sdistSelBand) ord.push(k);
+      const hasFocus = sdistHoverBand >= 0 || sdistSelBand >= 0;
+      for (const k of ord) {
+        ctx.globalAlpha = hasFocus && k !== sdistHoverBand && k !== sdistSelBand ? 0.5 : 1;
         ctx.fillStyle = SUB_COLORS[k];
         let seg = [];
         let best = { share: 0 };
@@ -628,9 +636,10 @@
           }
         }
         flush();
-        // in-band labels for the top 10 subreddits only
-        if (k < 10 && best.share > 0.04) labelSpots.push({ ...best, name: subName(k) });
+        // in-band labels for the top 10 subreddits (and any selected band)
+        if ((k < 10 || k === sdistSelBand) && best.share > 0.04) labelSpots.push({ ...best, name: subName(k) });
       }
+      ctx.globalAlpha = 1;
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -969,23 +978,40 @@
     pieUI.txt.append(meta);
     tip.style.display = 'none';
   }
-  function sdistHover(mx, my, cx, cy) {
+  // locate the band under a canvas position (shared by hover and click)
+  function sdistBandAt(mx, my) {
     sdistSmoothed();
     const t = xInv(mx);
     const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
     const yv2 = yInv(my);
     const inY = sdistNorm ? (yv2 >= 0 && yv2 <= 1) : yv2 >= 0;
-    if (w < 0 || w >= weeks.length || !inY) { sdistDefault(); return; }
+    if (w < 0 || w >= weeks.length || !inY) return null;
     let total = 0;
     for (let k = 0; k < SBANDS - 1; k++) total += sdistSm[k][w];
-    if (total < 1e-4) { sdistDefault(); return; }
-    if (!sdistNorm && yv2 > total) { sdistDefault(); return; }   // background above the stack
-    let cum = 0, band = 0, share = 0;
-    for (let k = 0; k < SBANDS - 1; k++) {
+    if (total < 1e-4) return null;
+    if (!sdistNorm && yv2 > total) return null;   // background above the stack
+    const ord = [];
+    if (sdistSelBand >= 0) ord.push(sdistSelBand);
+    for (let k = 0; k < SBANDS - 1; k++) if (k !== sdistSelBand) ord.push(k);
+    let cum = 0, band = ord[ord.length - 1], share = 0;
+    for (const k of ord) {
       share = sdistSm[k][w] / total;
       cum += sdistNorm ? share : sdistSm[k][w];
-      if (yv2 <= cum || k === SBANDS - 2) { band = k; break; }
+      if (yv2 <= cum) { band = k; break; }
     }
+    return { w, band, share: sdistSm[band][w] / total };
+  }
+  function setSdistHoverBand(b) {
+    if (b !== sdistHoverBand) {
+      sdistHoverBand = b;
+      requestAnimationFrame(draw);
+    }
+  }
+  function sdistHover(mx, my, cx, cy) {
+    const hit = sdistBandAt(mx, my);
+    if (!hit) { setSdistHoverBand(-1); sdistDefault(); return; }
+    const { w, band, share } = hit;
+    setSdistHoverBand(band);
     ensurePieUI();
     const score = sdistMetric === 'score';
     const weekVals = sdistSm.slice(0, -1).map(a => a[w]);
@@ -1065,6 +1091,13 @@
     if (lineDrag) { lineDrag = null; return; }
     dragging = false;
     canvas.classList.remove('dragging');
+    if (moved < 5 && mode === 'sdist') {
+      const r = canvas.getBoundingClientRect();
+      const hit = sdistBandAt(e.clientX - r.left, e.clientY - r.top);
+      sdistSelBand = hit ? hit.band : -1;   // empty space deselects
+      requestAnimationFrame(draw);
+      return;
+    }
     if (moved < 5 && mode !== 'sdist') {
       const r = canvas.getBoundingClientRect();
       const d = nearest(e.clientX - r.left, e.clientY - r.top);
@@ -1077,7 +1110,7 @@
     hovered = null;
     overlayHover = null;
     tip.style.display = 'none';
-    if (mode === 'sdist') sdistDefault();
+    if (mode === 'sdist') { setSdistHoverBand(-1); sdistDefault(); }
     else if (!pinned) showDetail(null, false);
     requestAnimationFrame(draw);
   });
