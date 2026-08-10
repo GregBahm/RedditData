@@ -86,7 +86,7 @@
     font-weight: 600;
   }
   .mode-top #legendOv { display: none; }
-  .mode-top .radios { display: none; }
+  .mode-top #scatterRadios { display: none; }
   .controls {
     margin-left: auto;
     display: flex;
@@ -230,9 +230,13 @@
 <header>
   <div class="bar">
     <h1 id="viewTitle">Posts</h1>
-    <div class="legend radios">
+    <div class="legend radios" id="scatterRadios">
       <label><input type="radio" name="scatterY" id="ryScore" checked>Score</label>
       <label><input type="radio" name="scatterY" id="ryLen">Length</label>
+    </div>
+    <div class="legend radios" id="sdistRadios" style="display:none">
+      <label><input type="radio" name="sdMetric" id="sdMPosts" checked>Posts</label>
+      <label><input type="radio" name="sdMetric" id="sdMScore">Score</label>
     </div>
     <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
     <div class="legend" id="legendOv">
@@ -336,9 +340,30 @@
     `hsl(${(i * 137.508 % 360).toFixed(1)}, ${55 + (i % 2) * 12}%, ${50 + (i % 3) * 6}%)`
   ).concat(['#a5a5a0']);
   const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
-  let sdistSm = null;   // smoothed band series, cached per draw for hover
+  let sdistSm = null;         // smoothed band series, cached per draw for hover
+  let sdistMetric = 'posts';  // 'posts' = post counts, 'score' = point yield
   const allTimeCounts = topSubs.map(s => subTotals.get(s));
   allTimeCounts.push(items.length - allTimeCounts.reduce((a, b) => a + b, 0));
+  // score-yield variant of the same aggregation, over the same band set
+  const subScoreTotals = new Map();
+  for (const d of items) subScoreTotals.set(d.sub, (subScoreTotals.get(d.sub) || 0) + d.score);
+  const subWeeklyScore = Array.from({ length: SBANDS }, () => new Array(weeks.length).fill(0));
+  for (const d of items) {
+    const w = Math.floor((d.time - w0) / MS_WEEK);
+    const k = subIndex.has(d.sub) ? subIndex.get(d.sub) : SBANDS - 1;
+    subWeeklyScore[k][w] += d.score;
+  }
+  const allTimeScore = topSubs.map(s => Math.max(0, subScoreTotals.get(s) || 0));
+  allTimeScore.push(0);
+  const allScoreSum = items.reduce((a, d) => a + d.score, 0);
+  function sdistSmoothed() {
+    if (!sdistSm) {
+      const src = sdistMetric === 'score' ? subWeeklyScore : subWeekly;
+      // negative weekly score sums clamp to zero: stacked shares must be >= 0
+      sdistSm = src.map(a => smoothSeries(a, smoothSigma).map(v => Math.max(0, v)));
+    }
+    return sdistSm;
+  }
 
   // draggable percentile marker lines in the scatter views
   const pctile = (arr, p) => arr[Math.floor(p * (arr.length - 1))];
@@ -549,7 +574,8 @@
     if (mode === 'sdist') {
       // 100% stacked area: each week is a pie of subreddit shares, swept
       // over time; smoothing (shared slider) is applied to the raw counts
-      sdistSm = subWeekly.map(a => smoothSeries(a, smoothSigma));
+      sdistSm = null;
+      sdistSmoothed();
       const nW = weeks.length;
       const totals = new Array(nW).fill(0);
       for (let k = 0; k < SBANDS - 1; k++) {   // "other" is excluded from the normalization
@@ -914,18 +940,21 @@
   }
   function sdistDefault() {
     ensurePieUI();
-    drawPie(allTimeCounts.slice(0, -1), -1);
-    updatePieLegend(allTimeCounts.slice(0, -1));
+    const score = sdistMetric === 'score';
+    const vals = (score ? allTimeScore : allTimeCounts).slice(0, -1);
+    drawPie(vals, -1);
+    updatePieLegend(vals);
     pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', 'All time'));
-    meta.append(el('span', 'k', 'top ' + topSubs.length + ' of ' + subTotals.size + ' subreddits · ' + items.length.toLocaleString() + ' posts & comments'));
+    meta.append(el('span', 'k', 'top ' + topSubs.length + ' of ' + subTotals.size + ' subreddits · ' +
+      (score ? allScoreSum.toLocaleString() + ' total points' : items.length.toLocaleString() + ' posts & comments')));
     meta.append(el('span', 'k', 'hover the chart for any week’s pie'));
     pieUI.txt.append(meta);
     tip.style.display = 'none';
   }
   function sdistHover(mx, my, cx, cy) {
-    if (!sdistSm) sdistSm = subWeekly.map(a => smoothSeries(a, smoothSigma));
+    sdistSmoothed();
     const t = xInv(mx);
     const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
     const yv2 = yInv(my);
@@ -940,15 +969,18 @@
       if (yv2 <= cum || k === SBANDS - 2) { band = k; break; }
     }
     ensurePieUI();
+    const score = sdistMetric === 'score';
     const weekVals = sdistSm.slice(0, -1).map(a => a[w]);
     drawPie(weekVals, band);
     updatePieLegend(weekVals);
     pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', subName(band)));
-    meta.append(el('span', 'k', Math.round(share * 100) + '% of posts'));
+    meta.append(el('span', 'k', Math.round(share * 100) + (score ? '% of points' : '% of posts')));
     meta.append(el('span', 'k', 'week of ' + new Date(weeks[w].t - MS_WEEK / 2).toLocaleDateString(undefined, { dateStyle: 'medium' })));
-    meta.append(el('span', 'k', `${subWeekly[band][w]} of ${weeks[w].count} that week unsmoothed`));
+    meta.append(el('span', 'k', score
+      ? `${subWeeklyScore[band][w].toLocaleString()} of ${weeks[w].net.toLocaleString()} points that week unsmoothed`
+      : `${subWeekly[band][w]} of ${weeks[w].count} that week unsmoothed`));
     pieUI.txt.append(meta);
     tip.textContent = subName(band) + ' · ' + Math.round(share * 100) + '%';
     tip.style.display = 'block';
@@ -1152,6 +1184,7 @@
     document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist' || m === 'sdist');
     scaleToggle.style.display = m === 'sdist' ? 'none' : '';
     document.getElementById('tip').style.display = 'none';
+    document.getElementById('sdistRadios').style.display = m === 'sdist' ? '' : 'none';
     updateSmoothRow();
     toggleLabel();
     computeBase();
@@ -1168,6 +1201,14 @@
   }
   ryScore.addEventListener('change', () => setMode('time'));
   ryLen.addEventListener('change', () => setMode('ltime'));
+  for (const id of ['sdMPosts', 'sdMScore']) {
+    document.getElementById(id).addEventListener('change', () => {
+      sdistMetric = document.getElementById('sdMScore').checked ? 'score' : 'posts';
+      sdistSm = null;
+      sdistDefault();
+      requestAnimationFrame(draw);
+    });
+  }
   tabPosts.addEventListener('click', () => setMode(ryLen.checked ? 'ltime' : 'time'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
