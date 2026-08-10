@@ -83,7 +83,7 @@
     font-size: 12px; color: #898781;
     z-index: 6;
   }
-  #recBtn {
+  #recBar button {
     font: inherit;
     color: #52514e;
     background: rgba(252, 252, 251, 0.92);
@@ -92,7 +92,7 @@
     padding: 4px 10px;
     cursor: pointer;
   }
-  #recBtn.on { color: #c33; font-weight: 600; }
+  #recBar button.on { color: #c33; font-weight: 600; }
   #recInfo { background: rgba(252, 252, 251, 0.85); border-radius: 6px; padding: 3px 8px; }
   #recInfo:empty { display: none; }
 </style>
@@ -100,7 +100,14 @@
 <body>
 <canvas id="gl"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
-<div id="recBar"><button id="recBtn">⏺ record</button><span id="recInfo"></span></div>
+<div id="recBar">
+  <button id="recBtn">⏺ record sequence</button>
+  <button id="kfBtn" style="display:none">✚ keyframe</button>
+  <button id="clearBtn" style="display:none">clear</button>
+  <button id="prevBtn" style="display:none">▶ preview</button>
+  <button id="bakeBtn" style="display:none">bake</button>
+  <span id="recInfo"></span>
+</div>
 <div id="pick"></div>
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
@@ -121,6 +128,7 @@
       <div class="prow" id="focusRow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="320"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.004"></div>
     </div>
+    <div class="prow"><span>keyframe secs</span><input type="range" id="cKfSec" min="0.5" max="5" step="0.25" value="2"></div>
     <div class="prow" id="tunRow">
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
@@ -529,7 +537,9 @@
   let hoverId = -1, pinId = -1, lastMx = -1, lastMy = -1;
   let frame = 0;
   let ovState = null;          // replay override for offline rendering
-  let recording = null;        // snapshot array while recording
+  let recording = false;       // keyframe-recording mode
+  let previewing = null;       // { t0, saved } while previewing the sequence
+  let seq = [];                // keyframe sequence
   let exporting = false;
   function resolveDof() {
     let k = light.dofK, f = light.focusZ;
@@ -545,7 +555,7 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cKfSec']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -641,15 +651,17 @@
   }
 
   function loop() {
-    if (recording) {
-      const dof = resolveDof();
-      recording.push({
-        t: performance.now(),
-        px: pan.x, py: pan.y, zoom, yaw, pitch,
-        hoverId, pinId, mx: lastMx, my: lastMy,
-        dofK: dof.k, focusZ: dof.f,
-      });
-      recBtn.textContent = '⏹ stop · ' + fmtTime((performance.now() - recording[0].t) / 1000);
+    if (previewing) {
+      const totalMs = (seq.length - 1) * +ctl.cKfSec.value * 1000;
+      const tm = Math.min(performance.now() - previewing.t0, totalMs);
+      const s = kfState(tm);
+      pan.x = s.px; pan.y = s.py;
+      zoom = s.zoom; yaw = s.yaw; pitch = s.pitch;
+      pinId = s.pinId; hoverId = -1;
+      ovState = { hoverId: -1, pinId: s.pinId, dofK: s.dofK, focusZ: s.focusZ };
+      frame = 0;
+      updatePick(0, 0);
+      if (tm >= totalMs) stopPreview();
     }
     if (!exporting && frame < MAX_SPP) {
       renderSample();
@@ -912,13 +924,13 @@
   let mode = null, lastX = 0, lastY = 0, downX = 0, downY = 0;
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
-    if (exporting) return;
+    if (exporting || previewing) return;
     mode = e.button === 2 ? 'rotate' : 'pan';
     downX = lastX = e.clientX; downY = lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
-    if (exporting) return;
+    if (exporting || previewing) return;
     lastMx = e.clientX; lastMy = e.clientY;
     if (mode) {
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -941,7 +953,7 @@
     }
   });
   canvas.addEventListener('pointerup', e => {
-    if (exporting) return;
+    if (exporting || previewing) return;
     const wasPan = mode === 'pan';
     mode = null;
     if (wasPan && Math.hypot(e.clientX - downX, e.clientY - downY) < 5) {
@@ -951,7 +963,7 @@
   });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    if (exporting) return;
+    if (exporting || previewing) return;
     const f = Math.pow(1.0015, -e.deltaY);
     const cx = e.clientX - W / 2, cy = H / 2 - e.clientY;
     zoom *= f;
@@ -960,35 +972,122 @@
     reset();
   }, { passive: false });
 
-  // ---- recording: capture manipulations, then replay offline at high
-  // quality into a numbered PNG sequence for video editing ----
+  // ---- keyframe sequences: capture states, ease between them, and either
+  // preview live or bake offline into a numbered PNG sequence ----
   const recBtn = document.getElementById('recBtn');
+  const kfBtn = document.getElementById('kfBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const bakeBtn = document.getElementById('bakeBtn');
   const recInfo = document.getElementById('recInfo');
   let cancelExport = false;
-  recBtn.addEventListener('click', async () => {
-    if (exporting) { cancelExport = true; return; }
-    if (!recording) {
-      if (!window.showDirectoryPicker) {
-        recInfo.textContent = 'folder access is not supported in this browser';
-        return;
-      }
-      recording = [];
-      recBtn.classList.add('on');
-      recBtn.textContent = '⏹ stop · 0:00';
-      recInfo.textContent = '';
+  try { seq = JSON.parse(localStorage.getItem('pt-seq') || '[]'); } catch (e) {}
+  const saveSeq = () => localStorage.setItem('pt-seq', JSON.stringify(seq));
+
+  // eased state along the sequence timeline (tm in ms)
+  function kfState(tm) {
+    const segS = +ctl.cKfSec.value * 1000;
+    const seg = Math.max(0, Math.min(Math.floor(tm / segS), seq.length - 2));
+    const u = Math.min(1, Math.max(0, (tm - seg * segS) / segS));
+    const e = u * u * (3 - 2 * u);   // ease in / ease out
+    const a = seq[seg], b = seq[seg + 1];
+    const L = (x, y) => x + (y - x) * e;
+    return {
+      px: L(a.px, b.px), py: L(a.py, b.py), zoom: L(a.zoom, b.zoom),
+      yaw: L(a.yaw, b.yaw), pitch: L(a.pitch, b.pitch),
+      pinId: e < 0.5 ? a.pinId : b.pinId,
+      dofK: L(a.dofK, b.dofK), focusZ: L(a.focusZ, b.focusZ),
+    };
+  }
+
+  function updateRecUI() {
+    const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+    if (exporting) {
+      show(recBtn, true); recBtn.textContent = '✕ cancel';
+      show(kfBtn, false); show(clearBtn, false); show(prevBtn, false); show(bakeBtn, false);
       return;
     }
-    const rec = recording;
-    recording = null;
-    recBtn.classList.remove('on');
-    recBtn.textContent = '⏺ record';
-    if (rec.length < 2) return;
+    if (previewing) {
+      show(recBtn, false); show(kfBtn, false); show(clearBtn, false); show(bakeBtn, false);
+      show(prevBtn, true); prevBtn.textContent = '⏹ stop preview';
+      return;
+    }
+    recBtn.classList.toggle('on', recording);
+    show(recBtn, true);
+    recBtn.textContent = recording ? '⏹ stop' : '⏺ record sequence';
+    show(kfBtn, recording);
+    if (recording) kfBtn.textContent = `✚ keyframe (${seq.length})`;
+    show(clearBtn, !recording && seq.length > 0);
+    show(prevBtn, !recording && seq.length > 1);
+    prevBtn.textContent = '▶ preview';
+    show(bakeBtn, !recording && seq.length > 1);
+    recInfo.textContent = seq.length
+      ? `${seq.length} keyframes · ${((seq.length - 1) * +ctl.cKfSec.value).toFixed(1)}s`
+      : '';
+  }
+
+  function stopPreview() {
+    if (!previewing) return;
+    const s = previewing.saved;
+    previewing = null;
+    ovState = null;
+    pan.x = s.px; pan.y = s.py;
+    zoom = s.zoom; yaw = s.yaw; pitch = s.pitch;
+    pinId = s.pinId; hoverId = s.hoverId;
+    frame = 0;
+    updatePick(lastMx, lastMy);
+    updateRecUI();
+  }
+
+  recBtn.addEventListener('click', () => {
+    if (exporting) { cancelExport = true; return; }
+    recording = !recording;
+    updateRecUI();
+  });
+  kfBtn.addEventListener('click', () => {
+    const dof = resolveDof();
+    seq.push({
+      px: pan.x, py: pan.y, zoom, yaw, pitch, pinId,
+      dofK: dof.k, focusZ: dof.f,
+    });
+    saveSeq();
+    updateRecUI();
+  });
+  clearBtn.addEventListener('click', () => {
+    seq = [];
+    saveSeq();
+    updateRecUI();
+  });
+  prevBtn.addEventListener('click', () => {
+    if (previewing) { stopPreview(); return; }
+    if (seq.length < 2) return;
+    previewing = {
+      t0: performance.now(),
+      saved: { px: pan.x, py: pan.y, zoom, yaw, pitch, pinId, hoverId },
+    };
+    pickPanel.style.pointerEvents = 'none';
+    updateRecUI();
+  });
+  bakeBtn.addEventListener('click', async () => {
+    if (seq.length < 2) return;
+    if (!window.showDirectoryPicker) {
+      recInfo.textContent = 'folder access is not supported in this browser';
+      return;
+    }
     let dir;
     try {
       dir = await window.showDirectoryPicker({ mode: 'readwrite' });
-    } catch (e) { recInfo.textContent = 'export cancelled'; return; }
+    } catch (e) { return; }
+    const FPS = 60;
+    const rec = [];
+    const total = Math.round((seq.length - 1) * +ctl.cKfSec.value * FPS);
+    for (let i = 0; i <= total; i++) {
+      const s = kfState(i * 1000 / FPS);
+      rec.push({ t: i * 1000 / FPS, hoverId: -1, mx: 0, my: 0, ...s });
+    }
     exportFrames(rec, dir);
   });
+  updateRecUI();
 
   function drawPanelInto(g, s) {
     const show = s.pinId >= 0 ? s.pinId : s.hoverId;
@@ -1052,7 +1151,7 @@
   async function exportFrames(rec, dir) {
     exporting = true;
     cancelExport = false;
-    recBtn.textContent = '✕ cancel';
+    updateRecUI();
     const saved = { px: pan.x, py: pan.y, zoom, yaw, pitch };
     pickPanel.style.display = 'none';
     const SPP = 300, FPS = 60;
@@ -1104,7 +1203,7 @@
     pan.x = saved.px; pan.y = saved.py;
     zoom = saved.zoom; yaw = saved.yaw; pitch = saved.pitch;
     exporting = false;
-    recBtn.textContent = '⏺ record';
+    updateRecUI();
     recInfo.textContent = cancelExport ? `cancelled · ${fi} frames written` : `done · ${total} frames · ${FPS} fps`;
     frame = 0;
   }
