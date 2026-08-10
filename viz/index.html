@@ -111,7 +111,6 @@
     color: var(--text-secondary);
   }
   #smoothRow.visible { display: flex; }
-  .mode-top #smoothRow { display: none; }
   #smoothRow input[type=range] { width: 160px; accent-color: var(--accent); margin: 0; }
   #smoothVal { min-width: 52px; }
   .key { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
@@ -218,6 +217,7 @@
       <nav class="tabs">
         <button class="tab" id="tabDist">Score distribution</button>
         <button class="tab" id="tabLdist">Length distribution</button>
+        <button class="tab" id="tabSdist">Subreddit distribution</button>
         <a class="tab" id="tab3d" href="experiment.html">Posts in 3D</a>
       </nav>
     </div>
@@ -283,6 +283,26 @@
   const lenItems = items.slice().sort((a, b) => b.len - a.len || a.time - b.time);
   lenItems.forEach((d, i) => { d.lrank = i + 1; });
 
+  // per-week subreddit composition, for the "Subreddit distribution" view:
+  // top subreddits get their own band, the rest pool into "other"
+  const subTotals = new Map();
+  for (const d of items) subTotals.set(d.sub, (subTotals.get(d.sub) || 0) + 1);
+  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(e => e[0]);
+  const subIndex = new Map(topSubs.map((s, i) => [s, i]));
+  const SBANDS = topSubs.length + 1;
+  const subWeekly = Array.from({ length: SBANDS }, () => new Array(weeks.length).fill(0));
+  for (const d of items) {
+    const w = Math.floor((d.time - w0) / MS_WEEK);
+    const k = subIndex.has(d.sub) ? subIndex.get(d.sub) : SBANDS - 1;
+    subWeekly[k][w]++;
+  }
+  const SUB_COLORS = [
+    '#4e79a7', '#e15759', '#f28e2b', '#59a14f', '#b07aa1', '#76b7b2',
+    '#edc948', '#ff9da7', '#9c755f', '#86bcb6', '#d37295', '#a0cbe8',
+  ].slice(0, topSubs.length).concat(['#a5a5a0']);
+  const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
+  let sdistSm = null;   // smoothed band series, cached per draw for hover
+
   // draggable percentile marker lines in the scatter views
   const pctile = (arr, p) => arr[Math.floor(p * (arr.length - 1))];
   const scoresAsc = items.map(d => d.score).sort((a, b) => a - b);
@@ -312,6 +332,12 @@
   // base (untransformed) data->pixel mapping, recomputed on resize / scale change
   let bx = { min: t0, max: t1 }, by = { min: 0, max: 1 };
   function computeBase() {
+    if (mode === 'sdist') {
+      by = { min: -0.02, max: 1.02 };
+      const tpad = (t1 - t0) * 0.02 || 1;
+      bx = { min: t0 - tpad, max: t1 + tpad };
+      return;
+    }
     const ys = activeList().map(yv);
     let ymin = Math.min(...ys), ymax = Math.max(...ys);
     const pad = (ymax - ymin) * 0.04 || 1;
@@ -348,6 +374,14 @@
   }
 
   function yTicks() {
+    if (mode === 'sdist') {
+      return [0, 0.25, 0.5, 0.75, 1]
+        .map(v => ({ v, label: Math.round(v * 100) + '%' }))
+        .filter(t => {
+          const py = yPix(t.v);
+          return py >= M.top - 4 && py <= H - M.bottom + 4;
+        });
+    }
     if (!useLog) {
       const lo = yInv(H - M.bottom), hi = yInv(M.top);
       const span = hi - lo;
@@ -465,7 +499,8 @@
     ctx.save();
     ctx.translate(14, M.top + plotH() / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText((mode === 'ltime' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
+    ctx.fillText(mode === 'sdist' ? 'share of posts'
+      : (mode === 'ltime' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
     ctx.restore();
 
     // clip to plot area for dots
@@ -474,7 +509,59 @@
     ctx.rect(M.left, M.top, plotW(), plotH());
     ctx.clip();
 
-    if (mode === 'dist' || mode === 'ldist') {
+    if (mode === 'sdist') {
+      // 100% stacked area: each week is a pie of subreddit shares, swept
+      // over time; smoothing (shared slider) is applied to the raw counts
+      sdistSm = subWeekly.map(a => smoothSeries(a, smoothSigma));
+      const nW = weeks.length;
+      const totals = new Array(nW).fill(0);
+      for (let k = 0; k < SBANDS; k++) {
+        for (let w = 0; w < nW; w++) totals[w] += sdistSm[k][w];
+      }
+      const EPS = 1e-4;
+      const cumShare = new Array(nW).fill(0);
+      const labelSpots = [];
+      for (let k = 0; k < SBANDS; k++) {
+        ctx.fillStyle = SUB_COLORS[k];
+        let seg = [];
+        let best = { share: 0 };
+        const flush = () => {
+          if (seg.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(seg[0].x, seg[0].yb);
+            for (const p of seg) ctx.lineTo(p.x, p.yb);
+            for (let i = seg.length - 1; i >= 0; i--) ctx.lineTo(seg[i].x, seg[i].yt);
+            ctx.closePath();
+            ctx.fill();
+          }
+          seg = [];
+        };
+        for (let w = 0; w < nW; w++) {
+          if (totals[w] < EPS) { flush(); continue; }
+          const share = sdistSm[k][w] / totals[w];
+          const bot = cumShare[w];
+          const top = bot + share;
+          cumShare[w] = top;
+          const x = xPix(weeks[w].t);
+          seg.push({ x, yb: yPix(bot), yt: yPix(top) });
+          if (share > best.share && x > M.left + 30 && x < W - M.right - 30) {
+            best = { share, x, y: yPix((bot + top) / 2) };
+          }
+        }
+        flush();
+        if (best.share > 0.055) labelSpots.push({ ...best, name: subName(k) });
+      }
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const L of labelSpots) {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.fillStyle = '#1c1c1a';
+        ctx.strokeText(L.name, L.x, L.y);
+        ctx.fillText(L.name, L.x, L.y);
+      }
+    } else if (mode === 'dist' || mode === 'ldist') {
       // rank-distribution line: one polyline through every item, highest value first
       ctx.strokeStyle = C.accent;
       ctx.lineWidth = 2;
@@ -731,6 +818,31 @@
     return null;
   }
 
+  // hover readout for the subreddit-distribution bands
+  function sdistHover(mx, my) {
+    if (!sdistSm) return;
+    const t = xInv(mx);
+    const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
+    const yv2 = yInv(my);
+    if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) { showDetail(null, false); return; }
+    let total = 0;
+    for (let k = 0; k < SBANDS; k++) total += sdistSm[k][w];
+    if (total < 1e-4) { showDetail(null, false); return; }
+    let cum = 0, band = 0, share = 0;
+    for (let k = 0; k < SBANDS; k++) {
+      share = sdistSm[k][w] / total;
+      cum += share;
+      if (yv2 <= cum || k === SBANDS - 1) { band = k; break; }
+    }
+    detail.replaceChildren();
+    const meta = el('div', 'meta');
+    meta.append(el('span', 'score', subName(band)));
+    meta.append(el('span', 'k', Math.round(share * 100) + '% of posts'));
+    meta.append(el('span', 'k', 'week of ' + new Date(weeks[w].t - MS_WEEK / 2).toLocaleDateString(undefined, { dateStyle: 'medium' })));
+    meta.append(el('span', 'k', `${subWeekly[band][w]} of ${weeks[w].count} that week unsmoothed`));
+    detail.append(meta);
+  }
+
   let dragging = false, lastX = 0, lastY = 0, moved = 0, lineDrag = null;
   canvas.addEventListener('pointerdown', e => {
     const r = canvas.getBoundingClientRect();
@@ -770,6 +882,11 @@
       requestAnimationFrame(draw);
       return;
     }
+    if (mode === 'sdist') {
+      canvas.style.cursor = '';
+      sdistHover(mx, my);
+      return;
+    }
     canvas.style.cursor = pctLineHit(my) ? 'ns-resize' : '';
     const d = nearest(mx, my);
     const oh = overlayNearest(mx, my);
@@ -785,7 +902,7 @@
     if (lineDrag) { lineDrag = null; return; }
     dragging = false;
     canvas.classList.remove('dragging');
-    if (moved < 5) {
+    if (moved < 5 && mode !== 'sdist') {
       const r = canvas.getBoundingClientRect();
       const d = nearest(e.clientX - r.left, e.clientY - r.top);
       pinned = d;
@@ -862,7 +979,8 @@
   }
   function updateSmoothRow() {
     const any = [ovFreq, ovText, ovNet, ovPct, ovAvg].some(c => c.checked);
-    smoothRow.classList.toggle('visible', any);
+    smoothRow.classList.toggle('visible',
+      mode === 'sdist' || ((mode === 'time' || mode === 'ltime') && any));
   }
   function applySmooth() {
     const v = +smoothSlider.value;
@@ -895,6 +1013,7 @@
   const ryLen = document.getElementById('ryLen');
   const tabDist = document.getElementById('tabDist');
   const tabLdist = document.getElementById('tabLdist');
+  const tabSdist = document.getElementById('tabSdist');
   function setMode(m) {
     if (mode === m) return;
     // the two scatter views are the same chart with a different y — keep
@@ -905,7 +1024,10 @@
     if (m === 'ltime') ryLen.checked = true;
     tabDist.classList.toggle('active', m === 'dist');
     tabLdist.classList.toggle('active', m === 'ldist');
-    document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist');
+    tabSdist.classList.toggle('active', m === 'sdist');
+    document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist' || m === 'sdist');
+    scaleToggle.style.display = m === 'sdist' ? 'none' : '';
+    updateSmoothRow();
     toggleLabel();
     computeBase();
     if (scatterSwap) {
@@ -922,6 +1044,7 @@
   ryLen.addEventListener('change', () => setMode('ltime'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
+  tabSdist.addEventListener('click', () => setMode('sdist'));
 
   function resize() {
     const r = wrap.getBoundingClientRect();
