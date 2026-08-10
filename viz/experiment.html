@@ -29,6 +29,22 @@
   #panelBody { display: grid; gap: 6px; }
   #dofRows { display: grid; gap: 6px; }
   #dofRows.off { display: none; }
+  #tunRow { border-top: 1px solid rgba(11, 11, 11, 0.1); padding-top: 8px; margin-top: 2px; }
+  #tunRow select {
+    flex: 1; min-width: 0;
+    font: inherit;
+    padding: 2px 4px;
+    border: 1px solid rgba(11, 11, 11, 0.2); border-radius: 4px;
+    background: #fff; color: inherit;
+  }
+  #tunRow button {
+    font: inherit;
+    padding: 2px 8px;
+    border: 1px solid rgba(11, 11, 11, 0.2); border-radius: 4px;
+    background: #fff; color: inherit;
+    cursor: pointer;
+  }
+  #tunRow button:hover { border-color: rgba(11, 11, 11, 0.45); }
   .prow { display: flex; align-items: center; gap: 8px; }
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
@@ -104,6 +120,11 @@
       <div class="prow"><span>post mode</span><input type="checkbox" id="cPostM" checked></div>
       <div class="prow" id="focusRow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="320"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.004"></div>
+    </div>
+    <div class="prow" id="tunRow">
+      <select id="tunSel"></select>
+      <button id="tunSave" title="Save current settings as a new tuning">save</button>
+      <button id="tunDel" title="Delete the selected tuning">delete</button>
     </div>
   </div>
 </div>
@@ -646,8 +667,66 @@
     updatePick(lastMx, lastMy);
   };
   for (const id in ctl) {
-    ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
+    ctl[id].addEventListener('input', () => {
+      readLight();
+      saveLight();
+      reset();
+      // editing while a saved tuning is selected makes this a new, unsaved
+      // tuning: clear the selection to communicate that
+      if (tunSel.value) refreshTunSel('');
+    });
   }
+
+  // ---- saved tunings ----
+  const tunSel = document.getElementById('tunSel');
+  const tunSave = document.getElementById('tunSave');
+  const tunDel = document.getElementById('tunDel');
+  let tunings = [];
+  try { tunings = JSON.parse(localStorage.getItem('pt-tunings') || '[]'); } catch (e) {}
+  const saveTunings = () => localStorage.setItem('pt-tunings', JSON.stringify(tunings));
+  function refreshTunSel(sel) {
+    tunSel.replaceChildren();
+    const o0 = document.createElement('option');
+    o0.value = '';
+    o0.textContent = '— unsaved —';
+    tunSel.append(o0);
+    for (const t of tunings) {
+      const o = document.createElement('option');
+      o.value = t.name;
+      o.textContent = t.name;
+      tunSel.append(o);
+    }
+    tunSel.value = sel || '';
+    localStorage.setItem('pt-tuning-sel', tunSel.value);
+  }
+  tunSave.addEventListener('click', () => {
+    let n = 0;
+    for (const t of tunings) {
+      const m = /^Tuning (\d+)$/.exec(t.name);
+      if (m) n = Math.max(n, +m[1]);
+    }
+    const vals = {};
+    for (const id in ctl) vals[id] = getV(ctl[id]);
+    tunings.push({ name: 'Tuning ' + (n + 1), vals });
+    saveTunings();
+    refreshTunSel('Tuning ' + (n + 1));
+  });
+  tunDel.addEventListener('click', () => {
+    if (!tunSel.value) return;
+    tunings = tunings.filter(t => t.name !== tunSel.value);
+    saveTunings();
+    refreshTunSel('');
+  });
+  tunSel.addEventListener('change', () => {
+    localStorage.setItem('pt-tuning-sel', tunSel.value);
+    const t = tunings.find(x => x.name === tunSel.value);
+    if (!t) return;
+    for (const id in ctl) if (t.vals[id] !== undefined) setV(ctl[id], t.vals[id]);
+    readLight();
+    saveLight();
+    reset();
+  });
+  refreshTunSel(localStorage.getItem('pt-tuning-sel') || '');
 
   // ---- panel toggle ----
   const panel = document.getElementById('panel');
