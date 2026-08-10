@@ -194,6 +194,22 @@
   #detail .pin-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
   .sdWrap { display: flex; gap: 18px; align-items: center; height: 100%; }
   .sdPie { width: 144px; height: 144px; flex: none; }
+  .sdLegend {
+    flex: none;
+    display: grid;
+    grid-template-rows: repeat(4, auto);
+    grid-auto-flow: column;
+    gap: 3px 18px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .sdLegend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .sdLegend i {
+    width: 9px; height: 9px;
+    border-radius: 2px;
+    display: inline-block;
+    flex: none;
+  }
   .sdTxt { min-width: 0; }
   #tip {
     position: fixed; display: none;
@@ -850,10 +866,25 @@
     const cv = document.createElement('canvas');
     cv.width = 288; cv.height = 288;
     cv.className = 'sdPie';
+    const legend = el('div', 'sdLegend');
     const txt = el('div', 'sdTxt');
-    wrap.append(cv, txt);
+    wrap.append(cv, legend, txt);
     detail.replaceChildren(wrap);
-    pieUI = { wrap, cv, g: cv.getContext('2d'), txt };
+    pieUI = { wrap, cv, g: cv.getContext('2d'), legend, txt };
+  }
+  function updatePieLegend(vals) {
+    const total = vals.reduce((a, b) => a + b, 0);
+    pieUI.legend.replaceChildren();
+    if (total <= 0) return;
+    const top = vals.map((v, k) => [v, k]).sort((a, b) => b[0] - a[0]).slice(0, 8);
+    for (const [v, k] of top) {
+      const row = el('span');
+      const sw = document.createElement('i');
+      sw.style.background = SUB_COLORS[k];
+      row.append(sw, document.createTextNode(
+        subName(k) + ' ' + Math.round(v / total * 100) + '%'));
+      pieUI.legend.append(row);
+    }
   }
   function drawPie(vals, highlightK) {
     const g = pieUI.g;
@@ -884,6 +915,7 @@
   function sdistDefault() {
     ensurePieUI();
     drawPie(allTimeCounts.slice(0, -1), -1);
+    updatePieLegend(allTimeCounts.slice(0, -1));
     pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', 'All time'));
@@ -908,7 +940,9 @@
       if (yv2 <= cum || k === SBANDS - 2) { band = k; break; }
     }
     ensurePieUI();
-    drawPie(sdistSm.slice(0, -1).map(a => a[w]), band);
+    const weekVals = sdistSm.slice(0, -1).map(a => a[w]);
+    drawPie(weekVals, band);
+    updatePieLegend(weekVals);
     pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', subName(band)));
