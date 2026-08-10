@@ -536,13 +536,13 @@
       sdistSm = subWeekly.map(a => smoothSeries(a, smoothSigma));
       const nW = weeks.length;
       const totals = new Array(nW).fill(0);
-      for (let k = 0; k < SBANDS; k++) {
+      for (let k = 0; k < SBANDS - 1; k++) {   // "other" is excluded from the normalization
         for (let w = 0; w < nW; w++) totals[w] += sdistSm[k][w];
       }
       const EPS = 1e-4;
       const cumShare = new Array(nW).fill(0);
       const labelSpots = [];
-      for (let k = 0; k < SBANDS; k++) {
+      for (let k = 0; k < SBANDS - 1; k++) {
         ctx.fillStyle = SUB_COLORS[k];
         let seg = [];
         let best = { share: 0 };
@@ -883,11 +883,11 @@
   }
   function sdistDefault() {
     ensurePieUI();
-    drawPie(allTimeCounts, -1);
+    drawPie(allTimeCounts.slice(0, -1), -1);
     pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', 'All time'));
-    meta.append(el('span', 'k', items.length.toLocaleString() + ' posts & comments across ' + subTotals.size + ' subreddits'));
+    meta.append(el('span', 'k', 'top ' + topSubs.length + ' of ' + subTotals.size + ' subreddits · ' + items.length.toLocaleString() + ' posts & comments'));
     meta.append(el('span', 'k', 'hover the chart for any week’s pie'));
     pieUI.txt.append(meta);
     tip.style.display = 'none';
@@ -899,16 +899,16 @@
     const yv2 = yInv(my);
     if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) { sdistDefault(); return; }
     let total = 0;
-    for (let k = 0; k < SBANDS; k++) total += sdistSm[k][w];
+    for (let k = 0; k < SBANDS - 1; k++) total += sdistSm[k][w];
     if (total < 1e-4) { sdistDefault(); return; }
     let cum = 0, band = 0, share = 0;
-    for (let k = 0; k < SBANDS; k++) {
+    for (let k = 0; k < SBANDS - 1; k++) {
       share = sdistSm[k][w] / total;
       cum += share;
-      if (yv2 <= cum || k === SBANDS - 1) { band = k; break; }
+      if (yv2 <= cum || k === SBANDS - 2) { band = k; break; }
     }
     ensurePieUI();
-    drawPie(sdistSm.map(a => a[w]), band);
+    drawPie(sdistSm.slice(0, -1).map(a => a[w]), band);
     pieUI.txt.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', subName(band)));
