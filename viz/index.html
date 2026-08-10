@@ -237,6 +237,7 @@
     <div class="legend radios" id="sdistRadios" style="display:none">
       <label><input type="radio" name="sdMetric" id="sdMPosts" checked>Posts</label>
       <label><input type="radio" name="sdMetric" id="sdMScore">Score</label>
+      <label><input type="checkbox" id="sdNorm" checked>normalized</label>
     </div>
     <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
     <div class="legend" id="legendOv">
@@ -342,6 +343,7 @@
   const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
   let sdistSm = null;         // smoothed band series, cached per draw for hover
   let sdistMetric = 'posts';  // 'posts' = post counts, 'score' = point yield
+  let sdistNorm = true;       // normalized shares vs absolute stacked values
   const allTimeCounts = topSubs.map(s => subTotals.get(s));
   allTimeCounts.push(items.length - allTimeCounts.reduce((a, b) => a + b, 0));
   // score-yield variant of the same aggregation, over the same band set
@@ -395,9 +397,20 @@
   let bx = { min: t0, max: t1 }, by = { min: 0, max: 1 };
   function computeBase() {
     if (mode === 'sdist') {
-      by = { min: -0.02, max: 1.02 };
       const tpad = (t1 - t0) * 0.02 || 1;
       bx = { min: t0 - tpad, max: t1 + tpad };
+      if (sdistNorm) {
+        by = { min: -0.02, max: 1.02 };
+      } else {
+        const sm = sdistSmoothed();
+        let peak = 1;
+        for (let w = 0; w < weeks.length; w++) {
+          let t = 0;
+          for (let k = 0; k < SBANDS - 1; k++) t += sm[k][w];
+          if (t > peak) peak = t;
+        }
+        by = { min: -peak * 0.02, max: peak * 1.04 };
+      }
       return;
     }
     const ys = activeList().map(yv);
@@ -436,7 +449,7 @@
   }
 
   function yTicks() {
-    if (mode === 'sdist') {
+    if (mode === 'sdist' && sdistNorm) {
       return [0, 0.25, 0.5, 0.75, 1]
         .map(v => ({ v, label: Math.round(v * 100) + '%' }))
         .filter(t => {
@@ -444,7 +457,7 @@
           return py >= M.top - 4 && py <= H - M.bottom + 4;
         });
     }
-    if (!useLog) {
+    if (!useLog || mode === 'sdist') {
       const lo = yInv(H - M.bottom), hi = yInv(M.top);
       const span = hi - lo;
       const step = Math.pow(10, Math.floor(Math.log10(span / 6)));
@@ -561,7 +574,9 @@
     ctx.save();
     ctx.translate(14, M.top + plotH() / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText(mode === 'sdist' ? 'share of posts'
+    ctx.fillText(mode === 'sdist'
+      ? (sdistNorm ? (sdistMetric === 'score' ? 'share of points' : 'share of posts')
+        : (sdistMetric === 'score' ? 'points / week' : 'posts / week'))
       : (mode === 'ltime' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
     ctx.restore();
 
@@ -574,14 +589,14 @@
     if (mode === 'sdist') {
       // 100% stacked area: each week is a pie of subreddit shares, swept
       // over time; smoothing (shared slider) is applied to the raw counts
-      sdistSm = null;
       sdistSmoothed();
       const nW = weeks.length;
       const totals = new Array(nW).fill(0);
-      for (let k = 0; k < SBANDS - 1; k++) {   // "other" is excluded from the normalization
+      for (let k = 0; k < SBANDS - 1; k++) {   // "other" is excluded entirely
         for (let w = 0; w < nW; w++) totals[w] += sdistSm[k][w];
       }
       const EPS = 1e-4;
+      const heightRef = sdistNorm ? 1 : by.max / 1.04;   // for label sizing
       const cumShare = new Array(nW).fill(0);
       const labelSpots = [];
       for (let k = 0; k < SBANDS - 1; k++) {
@@ -601,14 +616,15 @@
         };
         for (let w = 0; w < nW; w++) {
           if (totals[w] < EPS) { flush(); continue; }
-          const share = sdistSm[k][w] / totals[w];
+          const v = sdistNorm ? sdistSm[k][w] / totals[w] : sdistSm[k][w];
           const bot = cumShare[w];
-          const top = bot + share;
+          const top = bot + v;
           cumShare[w] = top;
           const x = xPix(weeks[w].t);
           seg.push({ x, yb: yPix(bot), yt: yPix(top) });
-          if (share > best.share && x > M.left + 30 && x < W - M.right - 30) {
-            best = { share, x, y: yPix((bot + top) / 2) };
+          const frac = v / heightRef;
+          if (frac > best.share && x > M.left + 30 && x < W - M.right - 30) {
+            best = { share: frac, x, y: yPix((bot + top) / 2) };
           }
         }
         flush();
@@ -958,14 +974,16 @@
     const t = xInv(mx);
     const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
     const yv2 = yInv(my);
-    if (w < 0 || w >= weeks.length || yv2 < 0 || yv2 > 1) { sdistDefault(); return; }
+    const inY = sdistNorm ? (yv2 >= 0 && yv2 <= 1) : yv2 >= 0;
+    if (w < 0 || w >= weeks.length || !inY) { sdistDefault(); return; }
     let total = 0;
     for (let k = 0; k < SBANDS - 1; k++) total += sdistSm[k][w];
     if (total < 1e-4) { sdistDefault(); return; }
+    if (!sdistNorm && yv2 > total) { sdistDefault(); return; }   // background above the stack
     let cum = 0, band = 0, share = 0;
     for (let k = 0; k < SBANDS - 1; k++) {
       share = sdistSm[k][w] / total;
-      cum += share;
+      cum += sdistNorm ? share : sdistSm[k][w];
       if (yv2 <= cum || k === SBANDS - 2) { band = k; break; }
     }
     ensurePieUI();
@@ -1137,6 +1155,8 @@
   applySmooth();
   smoothSlider.addEventListener('input', () => {
     applySmooth();
+    sdistSm = null;
+    if (mode === 'sdist' && !sdistNorm) computeBase();
     requestAnimationFrame(draw);
   });
 
@@ -1205,10 +1225,17 @@
     document.getElementById(id).addEventListener('change', () => {
       sdistMetric = document.getElementById('sdMScore').checked ? 'score' : 'posts';
       sdistSm = null;
+      computeBase();
       sdistDefault();
       requestAnimationFrame(draw);
     });
   }
+  document.getElementById('sdNorm').addEventListener('change', () => {
+    sdistNorm = document.getElementById('sdNorm').checked;
+    computeBase();
+    view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+    requestAnimationFrame(draw);
+  });
   tabPosts.addEventListener('click', () => setMode(ryLen.checked ? 'ltime' : 'time'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
