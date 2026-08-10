@@ -79,6 +79,14 @@
   }
   .tab:hover { color: var(--text-primary); }
   a.tab { text-decoration: none; display: inline-flex; align-items: center; }
+  #tab3d {
+    background: var(--accent);
+    color: #fff;
+    border-color: transparent;
+    align-self: center;
+  }
+  #tab3d:hover { color: #fff; opacity: 0.88; }
+  .mode-top #tab3d { display: none; }
   .tab.active {
     background: var(--surface-1);
     border-color: var(--border);
@@ -247,6 +255,7 @@
       <label><input type="checkbox" id="ovPct"><span class="key" style="background:var(--ov-pct)"></span>% positive</label>
       <label><input type="checkbox" id="ovAvg"><span class="key" style="background:var(--ov-avg)"></span>avg score</label>
     </div>
+    <a class="tab" id="tab3d" href="experiment.html">Posts in 3D</a>
     <div id="smoothRow">
       <input type="range" id="smoothSlider" min="0" max="100" value="54" title="Smoothing">
       <span id="smoothVal">~30 wk</span>
@@ -257,7 +266,6 @@
         <button class="tab" id="tabDist">Score distribution</button>
         <button class="tab" id="tabLdist">Length distribution</button>
         <button class="tab" id="tabSdist">Subreddit distribution</button>
-        <a class="tab" id="tab3d" href="experiment.html">Posts in 3D</a>
       </nav>
     </div>
   </div>
