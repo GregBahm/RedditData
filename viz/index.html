@@ -86,6 +86,7 @@
     font-weight: 600;
   }
   .mode-top #legendOv { display: none; }
+  .mode-top .radios { display: none; }
   .controls {
     margin-left: auto;
     display: flex;
@@ -209,7 +210,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>Posts</h1>
+    <h1 id="viewTitle">Posts</h1>
     <div class="legend radios">
       <label><input type="radio" name="scatterY" id="ryScore" checked>Score</label>
       <label><input type="radio" name="scatterY" id="ryLen">Length</label>
@@ -228,6 +229,7 @@
     </div>
     <div class="controls">
       <nav class="tabs">
+        <button class="tab" id="tabPosts" style="display:none">Posts</button>
         <button class="tab" id="tabDist">Score distribution</button>
         <button class="tab" id="tabLdist">Length distribution</button>
         <button class="tab" id="tabSdist">Subreddit distribution</button>
@@ -1065,9 +1067,11 @@
   // view tabs
   const ryScore = document.getElementById('ryScore');
   const ryLen = document.getElementById('ryLen');
+  const tabPosts = document.getElementById('tabPosts');
   const tabDist = document.getElementById('tabDist');
   const tabLdist = document.getElementById('tabLdist');
   const tabSdist = document.getElementById('tabSdist');
+  const viewTitle = document.getElementById('viewTitle');
   function setMode(m) {
     if (mode === m) return;
     // the two scatter views are the same chart with a different y — keep
@@ -1076,9 +1080,16 @@
     mode = m;
     if (m === 'time') ryScore.checked = true;
     if (m === 'ltime') ryLen.checked = true;
-    tabDist.classList.toggle('active', m === 'dist');
-    tabLdist.classList.toggle('active', m === 'ldist');
-    tabSdist.classList.toggle('active', m === 'sdist');
+    // the title names the active view; the right-side tabs list the others
+    const scatter = m === 'time' || m === 'ltime';
+    viewTitle.textContent = scatter ? 'Posts'
+      : m === 'dist' ? 'Score distribution'
+      : m === 'ldist' ? 'Length distribution'
+      : 'Subreddit distribution';
+    tabPosts.style.display = scatter ? 'none' : '';
+    tabDist.style.display = m === 'dist' ? 'none' : '';
+    tabLdist.style.display = m === 'ldist' ? 'none' : '';
+    tabSdist.style.display = m === 'sdist' ? 'none' : '';
     document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist' || m === 'sdist');
     scaleToggle.style.display = m === 'sdist' ? 'none' : '';
     M.right = m === 'sdist' ? 158 : 24;   // room for the band label list
@@ -1098,6 +1109,7 @@
   }
   ryScore.addEventListener('change', () => setMode('time'));
   ryLen.addEventListener('change', () => setMode('ltime'));
+  tabPosts.addEventListener('click', () => setMode(ryLen.checked ? 'ltime' : 'time'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
   tabSdist.addEventListener('click', () => setMode('sdist'));
