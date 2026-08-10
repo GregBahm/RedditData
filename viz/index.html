@@ -303,7 +303,7 @@
   // top subreddits get their own band, the rest pool into "other"
   const subTotals = new Map();
   for (const d of items) subTotals.set(d.sub, (subTotals.get(d.sub) || 0) + 1);
-  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(e => e[0]);
+  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 50).map(e => e[0]);
   const subIndex = new Map(topSubs.map((s, i) => [s, i]));
   const SBANDS = topSubs.length + 1;
   const subWeekly = Array.from({ length: SBANDS }, () => new Array(weeks.length).fill(0));
@@ -312,12 +312,10 @@
     const k = subIndex.has(d.sub) ? subIndex.get(d.sub) : SBANDS - 1;
     subWeekly[k][w]++;
   }
-  const SUB_COLORS = [
-    '#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2',
-    '#f1ce63', '#d37295', '#499894', '#9d7660', '#a0cbe8', '#ffbe7d',
-    '#8cd17d', '#ff9d9a', '#d4a6c8', '#86bcb6', '#b6992d', '#fabfd2',
-    '#79706e', '#d7b5a6',
-  ].slice(0, topSubs.length).concat(['#a5a5a0']);
+  // golden-angle hue stepping: adjacent bands stay visually distinct at any count
+  const SUB_COLORS = topSubs.map((s, i) =>
+    `hsl(${(i * 137.508 % 360).toFixed(1)}, ${55 + (i % 2) * 12}%, ${50 + (i % 3) * 6}%)`
+  ).concat(['#a5a5a0']);
   const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
   let sdistSm = null;   // smoothed band series, cached per draw for hover
 
@@ -760,8 +758,9 @@
     // legend ordered by each band's final stack position
     if (mode === 'sdist' && sdistRightLabels.length) {
       const g = sdistRightLabels.sort((a, b) => a.y - b.y);
+      const gap = Math.max(10, Math.min(14, (H - M.top - M.bottom) / g.length));
       for (let i = 1; i < g.length; i++) {
-        if (g[i].y < g[i - 1].y + 14) g[i].y = g[i - 1].y + 14;
+        if (g[i].y < g[i - 1].y + gap) g[i].y = g[i - 1].y + gap;
       }
       ctx.font = '12px system-ui, sans-serif';
       ctx.textAlign = 'left';
