@@ -13,15 +13,46 @@
     position: fixed; top: 10px; right: 14px;
     font-size: 12px; color: #898781; pointer-events: none;
   }
+  #panel {
+    position: fixed; left: 14px; bottom: 14px;
+    background: rgba(252, 252, 251, 0.92);
+    border: 1px solid rgba(11, 11, 11, 0.12);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px; color: #52514e;
+    display: grid; gap: 6px;
+    user-select: none;
+  }
+  #panelHead { cursor: pointer; font-weight: 600; }
+  #panelHead span { color: #898781; font-weight: 400; }
+  #panel.closed #panelBody { display: none; }
+  #panelBody { display: grid; gap: 6px; }
+  .prow { display: flex; align-items: center; gap: 8px; }
+  .prow span { width: 80px; }
+  .prow input[type=range] { width: 130px; margin: 0; }
+  .prow input[type=color] {
+    width: 28px; height: 18px; padding: 0;
+    border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
+  }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 <div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<div id="panel">
+  <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
+  <div id="panelBody">
+    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="25"></div>
+    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="50"></div>
+    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff1e0"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="2.6"></div>
+    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#cdd8e4"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="0.9"></div>
+    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#eeeeee"></div>
+  </div>
+</div>
 <script src="data.js"></script>
 <script>
 (() => {
-  // ---- data: weekly subreddit composition, top 50, smoothed & normalized ----
+  // ---- data: weekly subreddit composition, top 50, smoothed, absolute ----
   const items = REDDIT_DATA.map(d => ({
     sub: d.sub,
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
@@ -65,7 +96,6 @@
   for (let k = 0; k < nB; k++) for (let w = 0; w < nW; w++) totals[w] += sm[k][w];
   let wA = 0; while (wA < nW && totals[wA] < 1e-3) wA++;
   let wB = nW - 1; while (wB > wA && totals[wB] < 1e-3) wB--;
-  // absolute stacked heights in chart units: the peak week fills the height
   let peak = 1;
   for (let w = wA; w <= wB; w++) if (totals[w] > peak) peak = totals[w];
 
@@ -81,33 +111,42 @@
   const bandColor = k => hslToRgb((k * 137.508) % 360, (55 + (k % 2) * 12) / 100, (50 + (k % 3) * 6) / 100);
 
   // ---- scene dimensions ----
-  const CW = 2000, CH = 1000, DEPTH = 300;
-  const LBL = 260;                       // front-plane label margin below the chart
+  const CW = 2000, CH = 1000, DEPTH = 300, BW = -(DEPTH + 2);
   const zOf = k => -(k / (nB - 1)) * DEPTH;   // sheet 0 flush with the front, top sheet recessed
   const X = w => (w - wA) / (wB - wA) * CW;
   const yScale = CH / peak;
-  const cumY = Array.from({ length: nB + 1 }, () => new Array(nW).fill(0));
-  for (let w = wA; w <= wB; w++) {
-    let c = 0;
-    for (let k = 0; k < nB; k++) { c += sm[k][w]; cumY[k + 1][w] = c * yScale; }
+  const nCols = wB - wA + 1;
+  // boundary texture rows: row k = top boundary of sheet k, in chart units
+  const bndData = new Float32Array(nCols * nB);
+  {
+    for (let w = wA; w <= wB; w++) {
+      let c = 0;
+      for (let k = 0; k < nB; k++) {
+        c += sm[k][w];
+        bndData[k * nCols + (w - wA)] = c * yScale;
+      }
+    }
   }
+  const bndAt = (k, x) => {
+    const u = Math.max(0, Math.min(1, x / CW)) * (nCols - 1);
+    const i = Math.floor(u), f = u - i;
+    const a = bndData[k * nCols + i];
+    const b = bndData[k * nCols + Math.min(i + 1, nCols - 1)];
+    return a + (b - a) * f;
+  };
 
-  // ---- ink texture (labels) and AO texture (layer contact shadows) ----
-  const UV_X0 = -120, UV_X1 = CW + 120, UV_Y0 = -LBL - 40, UV_Y1 = CH + 60;
+  // ---- ink texture: year labels on the mat + band label glyphs for the overlay ----
+  const UV_X0 = -120, UV_X1 = CW + 120, UV_Y0 = -300, UV_Y1 = CH + 60;
   const TEXW = 2048;
   const TEXH = Math.round(TEXW * (UV_Y1 - UV_Y0) / (UV_X1 - UV_X0));
   const texScale = TEXW / (UV_X1 - UV_X0);
   const toTX = x => (x - UV_X0) * texScale;
   const toTY = y => (UV_Y1 - y) * texScale;
-  // ink alpha is glyph coverage; ink red encodes which surface owns the
-  // label (sheet k -> k+1, backdrop -> 255) so deeper sheets that share the
-  // same chart position do not also print it
   const inkCv = document.createElement('canvas');
   inkCv.width = TEXW; inkCv.height = TEXH;
   const ig = inkCv.getContext('2d');
   ig.textBaseline = 'middle';
-  // year labels on the backdrop, below the chart
-  ig.fillStyle = 'rgb(255, 0, 0)';
+  ig.fillStyle = 'rgb(255, 0, 0)';   // red 255 = owned by the mat
   ig.font = `600 ${Math.round(30 * texScale)}px system-ui, sans-serif`;
   ig.textAlign = 'center';
   const y0year = new Date(w0 + wA * MS_WEEK).getUTCFullYear() + 1;
@@ -118,17 +157,17 @@
     if (w < wA || w > wB) continue;
     ig.fillText(String(y), toTX(X(w)), toTY(-90));
   }
-  // band labels for the top 10, at each band's widest visible point; they
-  // render as a separate always-visible pass (id 200 matches no surface),
-  // so record each label's chart-space rect and layer depth
+  // band labels (id 200: matched by no surface, drawn via the overlay pass)
   const labelRects = [];
   ig.font = `600 ${Math.round(26 * texScale)}px system-ui, sans-serif`;
   for (let k = 0; k < Math.min(10, nB); k++) {
     let best = { share: 0 };
     for (let w = wA; w <= wB; w++) {
-      const share = (cumY[k + 1][w] - cumY[k][w]) / CH;
+      const lo = k === 0 ? 0 : bndData[(k - 1) * nCols + (w - wA)];
+      const hi = bndData[k * nCols + (w - wA)];
+      const share = (hi - lo) / CH;
       if (share > best.share && X(w) > 120 && X(w) < CW - 120) {
-        best = { share, x: X(w), y: (cumY[k][w] + cumY[k + 1][w]) / 2 };
+        best = { share, x: X(w), y: (lo + hi) / 2 };
       }
     }
     if (best.share > 0.03) {
@@ -139,163 +178,277 @@
       labelRects.push({ x: best.x, y: best.y, w: wChart + 10, h: 40, z: zOf(k) + 1 });
     }
   }
-  const aoCv = document.createElement('canvas');
-  aoCv.width = TEXW; aoCv.height = TEXH;
-  const ag = aoCv.getContext('2d');
-  ag.lineJoin = ag.lineCap = 'round';
-  ag.filter = 'blur(4px)';
-  ag.strokeStyle = 'rgba(0, 0, 0, 0.5)';
-  ag.lineWidth = 7;
-  for (let k = 1; k < nB; k++) {
-    ag.beginPath();
-    for (let w = wA; w <= wB; w++) {
-      const tx = toTX(X(w)), ty = toTY(cumY[k][w]) - 5;   // shadow falls above the edge, onto the sheet behind
-      if (w === wA) ag.moveTo(tx, ty); else ag.lineTo(tx, ty);
-    }
-    ag.stroke();
-  }
-
-  // ---- geometry: interleaved [pos3, normal3, color4, bandId] ----
-  const verts = [];
-  const push = (p, n, c, b) => verts.push(p[0], p[1], p[2], n[0], n[1], n[2], c[0], c[1], c[2], c[3], b);
-  const quad = (p1, p2, p3, p4, n, c, b) => {
-    push(p1, n, c, b); push(p2, n, c, b); push(p3, n, c, b);
-    push(p1, n, c, b); push(p3, n, c, b); push(p4, n, c, b);
-  };
-  const WHITE = [0.94, 0.94, 0.93];
-  // sheets: sheet k covers from the base up to its top boundary, at z(k);
-  // sheet 0 (bottom band) sits at the front, higher bands recess backward
-  for (let k = 0; k < nB; k++) {
-    const zk = zOf(k);
-    const col = [...bandColor(k), 1];
-    for (let w = wA; w < wB; w++) {
-      const yA = cumY[k + 1][w], yB2 = cumY[k + 1][w + 1];
-      quad([X(w), 0, zk], [X(w + 1), 0, zk], [X(w + 1), yB2, zk], [X(w), yA, zk], [0, 0, 1], col, k + 1);
-    }
-    // riser: this sheet's top cut edge, connecting back to the sheet behind
-    if (k < nB - 1) {
-      const zb = zOf(k + 1);
-      const rc = [col[0] * 0.82, col[1] * 0.82, col[2] * 0.82, 0];
-      for (let w = wA; w < wB; w++) {
-        const yA = cumY[k + 1][w], yB2 = cumY[k + 1][w + 1];
-        const dx = X(w + 1) - X(w), dy = yB2 - yA;
-        const il = 1 / Math.hypot(dy, dx);
-        quad([X(w), yA, zk], [X(w + 1), yB2, zk], [X(w + 1), yB2, zb], [X(w), yA, zb],
-          [-dy * il, dx * il, 0], rc, 0);
-      }
-    }
-  }
-  // white back wall of the recess (behind the deepest sheet)
-  quad([0, 0, -DEPTH - 2], [CW, 0, -DEPTH - 2], [CW, CH, -DEPTH - 2], [0, CH, -DEPTH - 2], [0, 0, 1], [...WHITE, 0], 0);
-  // recess ceiling and side walls
-  quad([0, CH, 0], [CW, CH, 0], [CW, CH, -DEPTH - 2], [0, CH, -DEPTH - 2], [0, -1, 0], [...WHITE, 0], 0);
-  quad([0, 0, -DEPTH - 2], [0, CH, -DEPTH - 2], [0, CH, 0], [0, 0, 0], [1, 0, 0], [...WHITE, 0], 0);
-  quad([CW, 0, 0], [CW, CH, 0], [CW, CH, -DEPTH - 2], [CW, 0, -DEPTH - 2], [-1, 0, 0], [...WHITE, 0], 0);
-  // front mat around the opening; the strip below the chart carries the years
-  const BIG = 6000;
-  quad([-BIG, CH, 0], [CW + BIG, CH, 0], [CW + BIG, CH + BIG, 0], [-BIG, CH + BIG, 0], [0, 0, 1], [...WHITE, 0], 0);
-  quad([-BIG, -BIG, 0], [0, -BIG, 0], [0, CH, 0], [-BIG, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
-  quad([CW, -BIG, 0], [CW + BIG, -BIG, 0], [CW + BIG, CH, 0], [CW, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
-  quad([0, -BIG, 0], [CW, -BIG, 0], [CW, 0, 0], [0, 0, 0], [0, 0, 1], [...WHITE, 1], 255);
-  const vertData = new Float32Array(verts);
-  const nVerts = vertData.length / 11;
 
   // ---- gl ----
   const canvas = document.getElementById('gl');
-  const gl = canvas.getContext('webgl2', { antialias: true });
-  if (!gl) {
-    document.getElementById('hint').textContent = 'WebGL2 unavailable';
+  const gl = canvas.getContext('webgl2', { antialias: false });
+  const hint = document.getElementById('hint');
+  if (!gl || !gl.getExtension('EXT_color_buffer_float')) {
+    hint.textContent = 'WebGL2 float render targets unavailable';
     return;
   }
-  const vsrc = `#version 300 es
-  in vec3 aPos;
-  in vec3 aNorm;
-  in vec4 aCol;
-  in float aBand;
-  uniform mat4 uMVP;
-  out vec3 vNorm;
-  out vec4 vCol;
-  out vec2 vXY;
-  out float vBand;
+
+  const fsq = `#version 300 es
   void main() {
-    gl_Position = uMVP * vec4(aPos, 1.0);
-    vNorm = aNorm;
-    vCol = aCol;
-    vXY = aPos.xy;
-    vBand = aBand;
+    vec2 p = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3))[gl_VertexID];
+    gl_Position = vec4(p, 0, 1);
   }`;
-  const fsrc = `#version 300 es
+
+  const traceSrc = `#version 300 es
   precision highp float;
-  in vec3 vNorm;
-  in vec4 vCol;
-  in vec2 vXY;
-  in float vBand;
+  precision highp int;
+  uniform sampler2D uB;      // boundaries, nCols x nB, chart units
   uniform sampler2D uInk;
-  uniform sampler2D uAO;
-  uniform vec4 uUVRect;   // x0, y0, 1/w, 1/h in chart space
-  out vec4 o;
-  void main() {
-    vec3 base = vCol.rgb;
-    float aoMul = 1.0;
-    if (vCol.a > 0.5) {
-      vec2 uv = vec2((vXY.x - uUVRect.x) * uUVRect.z, 1.0 - (vXY.y - uUVRect.y) * uUVRect.w);
-      if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
-        vec4 ink = texture(uInk, uv);
-        if (ink.a > 0.01) {
-          // the canvas upload is already un-premultiplied, so red IS the id
-          float id = ink.r * 255.0;
-          if (abs(id - vBand) < 1.5) base = mix(base, vec3(0.12), ink.a);
+  uniform sampler2D uPrev;
+  uniform vec3 uCols[${nB}];
+  uniform vec2 uSize;
+  uniform vec3 uEye;
+  uniform vec3 uRight;
+  uniform vec3 uUp;
+  uniform vec3 uFwd;
+  uniform float uTanF;
+  uniform float uFrame;
+  uniform vec3 uSunDir;
+  uniform vec3 uSunE;
+  uniform vec3 uSkyL;
+  uniform vec3 uAlbB;
+  out vec4 outc;
+
+  const float CW = ${CW.toFixed(1)};
+  const float CH = ${CH.toFixed(1)};
+  const float BWZ = ${BW.toFixed(1)};
+  const int NB = ${nB};
+  const float SUN_COSMAX = 0.9992;
+  const float PI = 3.14159265;
+  const vec4 UVR = vec4(${UV_X0.toFixed(1)}, ${UV_Y0.toFixed(1)}, ${(1 / (UV_X1 - UV_X0)).toExponential(6)}, ${(1 / (UV_Y1 - UV_Y0)).toExponential(6)});
+
+  uint pcg(inout uint s) {
+    s = s * 747796405u + 2891336453u;
+    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+  }
+  float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
+
+  float zOf(int k) { return -(float(k) / float(NB - 1)) * ${DEPTH.toFixed(1)}; }
+  float Bnd(int k, float x) {
+    float u = clamp(x / CW, 0.0, 1.0) * float(${nCols - 1});
+    int i = int(floor(u));
+    int i1 = min(i + 1, ${nCols - 1});
+    float f = u - float(i);
+    return mix(texelFetch(uB, ivec2(i, k), 0).r, texelFetch(uB, ivec2(i1, k), 0).r, f);
+  }
+
+  // kind: 0 sky, 1 mat, 2 white wall, 3 sheet, 4 riser
+  struct HitInfo { float t; vec3 n; vec3 alb; int kind; };
+  HitInfo trace(vec3 o, vec3 dIn) {
+    HitInfo h;
+    h.t = 1e30; h.kind = 0; h.n = vec3(0.0, 0.0, 1.0); h.alb = vec3(0.0);
+    vec3 d = dIn;
+    if (abs(d.z) < 1e-5) d.z = d.z < 0.0 ? -1e-5 : 1e-5;
+    float eps = 0.05;
+    // mat plane z=0 (everything outside the opening) and back wall
+    {
+      float t = -o.z / d.z;
+      if (t > eps && t < h.t) {
+        vec2 p = o.xy + d.xy * t;
+        if (!(p.x > 0.0 && p.x < CW && p.y > 0.0 && p.y < CH)) {
+          h.t = t; h.kind = 1; h.n = vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
         }
-        aoMul = 1.0 - 0.55 * texture(uAO, uv).a;
+      }
+      float tb = (BWZ - o.z) / d.z;
+      if (tb > eps && tb < h.t) {
+        vec2 p = o.xy + d.xy * tb;
+        if (p.x >= 0.0 && p.x <= CW && p.y >= 0.0 && p.y <= CH) {
+          h.t = tb; h.kind = 2; h.n = vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
+        }
       }
     }
-    vec3 n = normalize(vNorm);
-    vec3 l = normalize(vec3(-0.35, 0.55, 0.75));
-    float diff = max(dot(n, l), 0.0);
-    float hemi = 0.5 + 0.5 * n.y;
-    vec3 col = base * (0.40 + 0.50 * diff + 0.18 * hemi) * aoMul;
-    o = vec4(col, 1.0);
+    // ceiling and floor of the recess
+    if (abs(d.y) > 1e-7) {
+      float t = (CH - o.y) / d.y;
+      if (t > eps && t < h.t) {
+        vec3 p = o + d * t;
+        if (p.x >= 0.0 && p.x <= CW && p.z <= 0.0 && p.z >= BWZ) {
+          h.t = t; h.kind = 2; h.n = vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0);
+        }
+      }
+      float tf = -o.y / d.y;
+      if (tf > eps && tf < h.t) {
+        vec3 p = o + d * tf;
+        if (p.x >= 0.0 && p.x <= CW && p.z <= 0.0 && p.z >= BWZ) {
+          h.t = tf; h.kind = 2; h.n = vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0);
+        }
+      }
+    }
+    // side walls
+    if (abs(d.x) > 1e-7) {
+      for (int sw = 0; sw < 2; sw++) {
+        float wx = sw == 0 ? 0.0 : CW;
+        float t = (wx - o.x) / d.x;
+        if (t > eps && t < h.t) {
+          vec3 p = o + d * t;
+          if (p.y >= 0.0 && p.y <= CH && p.z <= 0.0 && p.z >= BWZ) {
+            h.t = t; h.kind = 2; h.n = vec3(d.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
+          }
+        }
+      }
+    }
+    // sheets and risers, walked in ray order through the z planes
+    int s = d.z < 0.0 ? 1 : -1;
+    int k0 = d.z < 0.0 ? 0 : NB - 1;
+    for (int i = 0; i < NB; i++) {
+      int k = k0 + s * i;
+      float tk = (zOf(k) - o.z) / d.z;
+      if (tk > h.t) break;
+      vec3 p = o + d * tk;
+      if (tk > eps && p.x >= 0.0 && p.x <= CW && p.y >= 0.0 && p.y <= Bnd(k, p.x)) {
+        h.t = tk; h.kind = 3; h.alb = uCols[k];
+        h.n = vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
+        return h;
+      }
+      if (i < NB - 1) {
+        int kn = k + s;
+        int r = s > 0 ? k : kn;        // riser r spans z(r+1) .. z(r)
+        float tn = (zOf(kn) - o.z) / d.z;
+        float ta = max(tk, eps), tb2 = tn;
+        vec3 pa = o + d * ta;
+        vec3 pb = o + d * tb2;
+        float fa = pa.y - Bnd(r, pa.x);
+        float fb = pb.y - Bnd(r, pb.x);
+        if (fa * fb < 0.0) {
+          for (int j = 0; j < 10; j++) {
+            float tm = 0.5 * (ta + tb2);
+            vec3 pm = o + d * tm;
+            float fm = pm.y - Bnd(r, pm.x);
+            if (fm * fa >= 0.0) { ta = tm; fa = fm; } else tb2 = tm;
+          }
+          float tm = 0.5 * (ta + tb2);
+          vec3 pm = o + d * tm;
+          if (tm > eps && tm < h.t && pm.x >= 0.0 && pm.x <= CW && pm.y >= 0.0 && pm.y <= CH) {
+            float db = (Bnd(r, min(pm.x + 4.0, CW)) - Bnd(r, max(pm.x - 4.0, 0.0))) / 8.0;
+            vec3 n = normalize(vec3(-db, 1.0, 0.0));
+            if (dot(n, d) > 0.0) n = -n;
+            h.t = tm; h.kind = 4; h.n = n; h.alb = uCols[r] * 0.92;
+            return h;
+          }
+        }
+      }
+    }
+    return h;
+  }
+
+  vec3 onbT(vec3 n) {
+    vec3 a = abs(n.z) < 0.9 ? vec3(0, 0, 1) : vec3(1, 0, 0);
+    return normalize(cross(a, n));
+  }
+  vec3 cosineDir(vec3 n, inout uint s) {
+    float r1 = rnd(s), r2 = rnd(s);
+    float rr = sqrt(r1), ph = 6.2831853 * r2;
+    vec3 t = onbT(n), b = cross(n, t);
+    return normalize(t * (rr * cos(ph)) + b * (rr * sin(ph)) + n * sqrt(max(0.0, 1.0 - r1)));
+  }
+  vec3 coneDir(vec3 dir, inout uint s) {
+    float r1 = rnd(s), r2 = rnd(s);
+    float ct = mix(SUN_COSMAX, 1.0, r1);
+    float st = sqrt(max(0.0, 1.0 - ct * ct)), ph = 6.2831853 * r2;
+    vec3 t = onbT(dir), b = cross(dir, t);
+    return normalize(t * (st * cos(ph)) + b * (st * sin(ph)) + dir * ct);
+  }
+
+  void main() {
+    uint seed = uint(gl_FragCoord.x) * 1973u + uint(gl_FragCoord.y) * 9277u + uint(uFrame) * 26699u;
+    pcg(seed);
+    vec2 pix = gl_FragCoord.xy + vec2(rnd(seed), rnd(seed)) - 0.5;
+    vec2 ndc = (pix / uSize) * 2.0 - 1.0;
+    vec3 d = normalize(uFwd + uRight * ndc.x * uTanF * (uSize.x / uSize.y) + uUp * ndc.y * uTanF);
+    vec3 o = uEye;
+    vec3 L = vec3(0.0);
+    vec3 tp = vec3(1.0);
+    for (int bounce = 0; bounce < 2; bounce++) {
+      HitInfo h = trace(o, d);
+      if (h.kind == 0) { L += tp * uSkyL; break; }
+      vec3 p = o + d * h.t;
+      vec3 alb = (h.kind == 3 || h.kind == 4) ? h.alb : uAlbB;
+      if (h.kind == 1) {
+        vec2 uv = vec2((p.x - UVR.x) * UVR.z, 1.0 - (p.y - UVR.y) * UVR.w);
+        if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
+          vec4 ink = texture(uInk, uv);
+          if (ink.a > 0.01 && abs(ink.r * 255.0 - 255.0) < 1.5) alb = mix(alb, vec3(0.12), ink.a);
+        }
+      }
+      tp *= alb;
+      vec3 sd2 = coneDir(uSunDir, seed);
+      float ndl = dot(h.n, sd2);
+      if (ndl > 0.0) {
+        HitInfo sh = trace(p + h.n * 0.5, sd2);
+        if (sh.kind == 0) L += tp * uSunE * ndl / PI;
+      }
+      if (bounce == 1) break;
+      d = cosineDir(h.n, seed);
+      o = p + h.n * 0.5;
+    }
+    vec3 prev = texelFetch(uPrev, ivec2(gl_FragCoord.xy), 0).rgb;
+    outc = vec4(mix(prev, L, 1.0 / (uFrame + 1.0)), 1.0);
   }`;
-  const mk = (t, s) => {
-    const sh = gl.createShader(t);
-    gl.shaderSource(sh, s);
-    gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
-    return sh;
+
+  const showSrc = `#version 300 es
+  precision highp float;
+  uniform sampler2D uAcc;
+  out vec4 o;
+  void main() {
+    vec3 c = texelFetch(uAcc, ivec2(gl_FragCoord.xy), 0).rgb;
+    c = pow(clamp(c * 1.02, 0.0, 1.0), vec3(1.0 / 2.2));
+    o = vec4(c, 1.0);
+  }`;
+
+  const mkShader = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
   };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, mk(gl.VERTEX_SHADER, vsrc));
-  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsrc));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
-  const attr = (pg, name, size, stride, off) => {
-    const loc = gl.getAttribLocation(pg, name);
-    if (loc < 0) return;
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, off);
+  const mkProg = (vs, fs) => {
+    const p = gl.createProgram();
+    gl.attachShader(p, mkShader(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, mkShader(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
   };
-  const mkTex = (unit, cvs, uni) => {
+  const progTrace = mkProg(fsq, traceSrc);
+  const progShow = mkProg(fsq, showSrc);
+
+  const mkTex = (w, h, ifmt, fmt, type, data) => {
     const t = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, data);
+    return t;
+  };
+  const texB = mkTex(nCols, nB, gl.R32F, gl.RED, gl.FLOAT, bndData);
+  const texInk = (() => {
+    const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, cvs);
-    gl.uniform1i(gl.getUniformLocation(prog, uni), unit);
-  };
-  mkTex(0, inkCv, 'uInk');
-  mkTex(1, aoCv, 'uAO');
-  gl.uniform4f(gl.getUniformLocation(prog, 'uUVRect'), UV_X0, UV_Y0, 1 / (UV_X1 - UV_X0), 1 / (UV_Y1 - UV_Y0));
-  gl.enable(gl.DEPTH_TEST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, inkCv);
+    return t;
+  })();
+  const colFlat = new Float32Array(nB * 3);
+  for (let k = 0; k < nB; k++) {
+    const c = bandColor(k);
+    colFlat[k * 3] = Math.pow(c[0], 2.2);
+    colFlat[k * 3 + 1] = Math.pow(c[1], 2.2);
+    colFlat[k * 3 + 2] = Math.pow(c[2], 2.2);
+  }
 
-  // ---- band-label overlay pass: quads on their layer's plane, drawn
-  // without depth testing so labels never sink behind nearer layers ----
+  // ---- band-label overlay (raster pass over the traced image) ----
   const lvsrc = `#version 300 es
   in vec3 aPos;
   in vec2 aUV;
@@ -315,21 +468,14 @@
     if (a < 0.02) discard;
     o = vec4(vec3(0.10) * a, a);
   }`;
-  const lprog = gl.createProgram();
-  gl.attachShader(lprog, mk(gl.VERTEX_SHADER, lvsrc));
-  gl.attachShader(lprog, mk(gl.FRAGMENT_SHADER, lfsrc));
-  gl.linkProgram(lprog);
-  if (!gl.getProgramParameter(lprog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(lprog));
+  const lprog = mkProg(lvsrc, lfsrc);
   const lverts = [];
   const toU = x => (x - UV_X0) / (UV_X1 - UV_X0);
   const toV = y => 1 - (y - UV_Y0) / (UV_Y1 - UV_Y0);
   for (const L of labelRects) {
     const x0 = L.x - L.w / 2, x1 = L.x + L.w / 2;
     const y0 = L.y - L.h / 2, y1 = L.y + L.h / 2;
-    const c4 = [
-      [x0, y0], [x1, y0], [x1, y1],
-      [x0, y0], [x1, y1], [x0, y1],
-    ];
+    const c4 = [[x0, y0], [x1, y0], [x1, y1], [x0, y0], [x1, y1], [x0, y1]];
     for (const [px, py] of c4) lverts.push(px, py, L.z, toU(px), toV(py));
   }
   const lbuf = gl.createBuffer();
@@ -337,7 +483,7 @@
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lverts), gl.STATIC_DRAW);
   const nLVerts = lverts.length / 5;
 
-  // ---- minimal mat4 ----
+  // ---- mat4 helpers (for the overlay pass) ----
   const m4mul = (a, b) => {
     const o = new Float32Array(16);
     for (let c = 0; c < 4; c++) {
@@ -355,44 +501,151 @@
   const m4rotY = a => new Float32Array([Math.cos(a), 0, -Math.sin(a), 0, 0, 1, 0, 0, Math.sin(a), 0, Math.cos(a), 0, 0, 0, 0, 1]);
   const m4trans = (x, y, z) => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
 
-  // ---- camera ----
+  // ---- accumulation targets ----
+  let W = 0, H = 0;
+  let accTex = [null, null], accFb = [null, null], flip = 0;
+  function mkTargets() {
+    for (let i = 0; i < 2; i++) {
+      if (accTex[i]) { gl.deleteTexture(accTex[i]); gl.deleteFramebuffer(accFb[i]); }
+      accTex[i] = mkTex(W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
+      accFb[i] = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[i]);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, accTex[i], 0);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // ---- camera & lighting state ----
   let yaw = -0.35, pitch = 0.24, dist = 2100;
   const target = { x: CW / 2, y: CH * 0.4, z: -DEPTH / 2 };
-  let W = 0, H = 0;
   const FOV = 35 * Math.PI / 180;
+  let frame = 0;
+  const MAX_SPP = 1500;
 
-  function draw() {
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.949, 0.945, 0.933, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    let mv = m4trans(-target.x, -target.y, -target.z);
-    mv = m4mul(m4rotY(yaw), mv);
-    mv = m4mul(m4rotX(pitch), mv);
-    mv = m4mul(m4trans(0, 0, -dist), mv);
-    const mvp = m4mul(m4persp(FOV, W / H, 20, 40000), mv);
-    gl.useProgram(prog);
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    attr(prog, 'aPos', 3, 44, 0);
-    attr(prog, 'aNorm', 3, 44, 12);
-    attr(prog, 'aCol', 4, 44, 24);
-    attr(prog, 'aBand', 1, 44, 40);
-    gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'uMVP'), false, mvp);
-    gl.drawArrays(gl.TRIANGLES, 0, nVerts);
-    // label overlay: always visible, alpha-blended
+  const ctl = {};
+  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cBack']) {
+    ctl[id] = document.getElementById(id);
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem('sd3d-light') || 'null');
+    if (saved) for (const id in ctl) if (saved[id] !== undefined) ctl[id].value = saved[id];
+  } catch (e) {}
+  const saveLight = () => {
+    const vals = {};
+    for (const id in ctl) vals[id] = ctl[id].value;
+    localStorage.setItem('sd3d-light', JSON.stringify(vals));
+  };
+  const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
+  const light = {};
+  function readLight() {
+    const az = +ctl.cAz.value * Math.PI / 180, el = +ctl.cEl.value * Math.PI / 180;
+    light.sunDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
+    light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
+    light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
+    light.albB = hex2lin(ctl.cBack.value);
+  }
+  readLight();
+  const reset = () => { frame = 0; };
+  for (const id in ctl) {
+    ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
+  }
+  const panel = document.getElementById('panel');
+  const panelArrow = document.getElementById('panelArrow');
+  const setPanel = closed => {
+    panel.classList.toggle('closed', closed);
+    panelArrow.textContent = closed ? '▸' : '▾';
+    localStorage.setItem('sd3d-panel-closed', closed ? '1' : '0');
+  };
+  document.getElementById('panelHead').addEventListener('click', () =>
+    setPanel(!panel.classList.contains('closed')));
+  if (localStorage.getItem('sd3d-panel-closed') === '1') setPanel(true);
+
+  function camBasis() {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const rot = v => {
+      const y1 = cp * v[1] + sp * v[2];
+      const z1 = -sp * v[1] + cp * v[2];
+      return [cy * v[0] - sy * z1, y1, sy * v[0] + cy * z1];
+    };
+    const off = rot([0, 0, dist]);
+    return {
+      eye: [target.x + off[0], target.y + off[1], target.z + off[2]],
+      right: rot([1, 0, 0]),
+      up: rot([0, 1, 0]),
+      fwd: rot([0, 0, -1]),
+    };
+  }
+
+  function renderSample() {
+    const cam = camBasis();
+    gl.useProgram(progTrace);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[flip]);
+    gl.viewport(0, 0, W, H);
+    const U = n => gl.getUniformLocation(progTrace, n);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texB); gl.uniform1i(U('uB'), 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texInk); gl.uniform1i(U('uInk'), 1);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, accTex[1 - flip]); gl.uniform1i(U('uPrev'), 2);
+    gl.uniform3fv(U('uCols'), colFlat);
+    gl.uniform2f(U('uSize'), W, H);
+    gl.uniform3fv(U('uEye'), cam.eye);
+    gl.uniform3fv(U('uRight'), cam.right);
+    gl.uniform3fv(U('uUp'), cam.up);
+    gl.uniform3fv(U('uFwd'), cam.fwd);
+    gl.uniform1f(U('uTanF'), Math.tan(FOV / 2));
+    gl.uniform1f(U('uFrame'), frame);
+    gl.uniform3fv(U('uSunDir'), light.sunDir);
+    gl.uniform3fv(U('uSunE'), light.sunE);
+    gl.uniform3fv(U('uSkyL'), light.skyL);
+    gl.uniform3fv(U('uAlbB'), light.albB);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.useProgram(progShow);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, W, H);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, accTex[flip]);
+    gl.uniform1i(gl.getUniformLocation(progShow, 'uAcc'), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // label overlay
     if (nLVerts) {
+      let mv = m4trans(-target.x, -target.y, -target.z);
+      mv = m4mul(m4rotY(yaw), mv);
+      mv = m4mul(m4rotX(pitch), mv);
+      mv = m4mul(m4trans(0, 0, -dist), mv);
+      const mvp = m4mul(m4persp(FOV, W / H, 20, 40000), mv);
       gl.useProgram(lprog);
       gl.bindBuffer(gl.ARRAY_BUFFER, lbuf);
-      attr(lprog, 'aPos', 3, 20, 0);
-      attr(lprog, 'aUV', 2, 20, 12);
+      const aPos = gl.getAttribLocation(lprog, 'aPos');
+      const aUV = gl.getAttribLocation(lprog, 'aUV');
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 20, 0);
+      gl.enableVertexAttribArray(aUV);
+      gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 20, 12);
       gl.uniformMatrix4fv(gl.getUniformLocation(lprog, 'uMVP'), false, mvp);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texInk);
       gl.uniform1i(gl.getUniformLocation(lprog, 'uInk'), 0);
-      gl.disable(gl.DEPTH_TEST);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.drawArrays(gl.TRIANGLES, 0, nLVerts);
       gl.disable(gl.BLEND);
-      gl.enable(gl.DEPTH_TEST);
+      gl.disableVertexAttribArray(aPos);
+      gl.disableVertexAttribArray(aUV);
     }
+    flip = 1 - flip;
+    frame++;
+  }
+
+  function loop() {
+    if (frame < MAX_SPP) {
+      renderSample();
+      if (frame % 10 === 0 || frame < 10) {
+        hint.textContent = `path tracing · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
+      }
+    }
+    requestAnimationFrame(loop);
   }
 
   // ---- interaction ----
@@ -411,35 +664,34 @@
       yaw += dx * 0.005;
       pitch = Math.max(-1.3, Math.min(1.3, pitch + dy * 0.005));
     } else {
-      // pan in the camera plane
       const wpp = 2 * dist * Math.tan(FOV / 2) / H;
-      const cy = Math.cos(yaw), sy = Math.sin(yaw);
-      const cp = Math.cos(pitch), sp = Math.sin(pitch);
-      const rx = [cy, 0, sy];                       // camera right in world
-      const up = [sy * sp, cp, -cy * sp];           // camera up in world
-      target.x -= (rx[0] * dx - up[0] * dy) * wpp;
-      target.y -= (rx[1] * dx - up[1] * dy) * wpp;
-      target.z -= (rx[2] * dx - up[2] * dy) * wpp;
+      const cam = camBasis();
+      target.x -= (cam.right[0] * dx - cam.up[0] * dy) * wpp;
+      target.y -= (cam.right[1] * dx - cam.up[1] * dy) * wpp;
+      target.z -= (cam.right[2] * dx - cam.up[2] * dy) * wpp;
     }
-    requestAnimationFrame(draw);
+    reset();
+    requestAnimationFrame(() => {});
   });
   canvas.addEventListener('pointerup', () => { mode = null; });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     dist *= Math.pow(1.0015, e.deltaY);
     dist = Math.max(150, Math.min(15000, dist));
-    requestAnimationFrame(draw);
+    reset();
   }, { passive: false });
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    draw();
+    canvas.width = W;
+    canvas.height = H;
+    mkTargets();
+    reset();
   }
   window.addEventListener('resize', resize);
   resize();
+  loop();
+  window.__sd = { sample: renderSample, spp: () => frame, gl };   // debug hook
 })();
 </script>
 </body>
