@@ -243,7 +243,7 @@
     <div class="legend radios" id="sdistRadios" style="display:none">
       <label><input type="radio" name="sdMetric" id="sdMPosts" checked>Posts</label>
       <label><input type="radio" name="sdMetric" id="sdMScore">Score</label>
-      <label><input type="checkbox" id="sdNorm" checked>normalized</label>
+      <label><input type="checkbox" id="sdNorm">normalized</label>
     </div>
     <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
     <a class="tab" id="tab3d" href="experiment.html">In fabulous 3D</a>
@@ -372,7 +372,7 @@
   const subName = k => k < topSubs.length ? 'r/' + topSubs[k] : 'other';
   let sdistSm = null;         // smoothed band series, cached per draw for hover
   let sdistMetric = 'posts';  // 'posts' = post counts, 'score' = point yield
-  let sdistNorm = true;       // normalized shares vs absolute stacked values
+  let sdistNorm = false;      // normalized shares vs absolute stacked values
   let sdistHoverBand = -1;    // hovered band: others dim toward background
   let sdistSelBand = -1;      // selected band: pinned to the bottom of the stack
   const allTimeCounts = topSubs.map(s => subTotals.get(s));
