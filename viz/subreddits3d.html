@@ -58,16 +58,16 @@
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
   <div id="panelBody">
-    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="25"></div>
-    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="50"></div>
-    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="32"></div>
-    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff1e0"><input type="range" id="cSunI" min="0" max="200" step="0.05" value="2.6"></div>
-    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#cdd8e4"><input type="range" id="cSkyI" min="0" max="100" step="0.05" value="0.9"></div>
+    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="155"></div>
+    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="10"></div>
+    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="7"></div>
+    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff0db"><input type="range" id="cSunI" min="0" max="200" step="0.05" value="40"></div>
+    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#2a464c"><input type="range" id="cSkyI" min="0" max="100" step="0.05" value="20"></div>
     <div class="prow"><span>opacity</span><input type="range" id="cOpac" min="0" max="100" value="45"></div>
     <div class="prow"><span>frost</span><input type="range" id="cFrost" min="0" max="100" value="60"></div>
     <div class="prow"><span>bar scale</span><input type="range" id="cScale" min="5" max="300" value="100"></div>
-    <div class="prow"><span>ground</span><input type="color" id="cBack" value="#eeeeee"></div>
-    <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#616161"></div>
+    <div class="prow"><span>ground</span><input type="color" id="cBack" value="#8f8f8f"></div>
+    <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#000000"></div>
     <div class="prow" id="tunRow">
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
@@ -620,19 +620,25 @@
   }
 
   // ---- saved tunings ----
+  // built-ins ship with the page; user-saved ones live in localStorage
+  const BUILTIN_TUNINGS = [
+    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000' } },
+    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a' } },
+  ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
   const tunDel = document.getElementById('tunDel');
-  let tunings = [];
-  try { tunings = JSON.parse(localStorage.getItem('sd3d-tunings') || '[]'); } catch (e) {}
-  const saveTunings = () => localStorage.setItem('sd3d-tunings', JSON.stringify(tunings));
+  let userTunings = [];
+  try { userTunings = JSON.parse(localStorage.getItem('sd3d-tunings') || '[]'); } catch (e) {}
+  const allTunings = () => [...BUILTIN_TUNINGS, ...userTunings.filter(t => !BUILTIN_TUNINGS.some(b => b.name === t.name))];
+  const saveTunings = () => localStorage.setItem('sd3d-tunings', JSON.stringify(userTunings));
   function refreshTunSel(sel) {
     tunSel.replaceChildren();
     const o0 = document.createElement('option');
     o0.value = '';
     o0.textContent = '— unsaved —';
     tunSel.append(o0);
-    for (const t of tunings) {
+    for (const t of allTunings()) {
       const o = document.createElement('option');
       o.value = t.name;
       o.textContent = t.name;
@@ -643,32 +649,32 @@
   }
   tunSave.addEventListener('click', () => {
     let n = 0;
-    for (const t of tunings) {
+    for (const t of allTunings()) {
       const m = /^Tuning (\d+)$/.exec(t.name);
       if (m) n = Math.max(n, +m[1]);
     }
     const vals = {};
     for (const id in ctl) vals[id] = ctl[id].value;
-    tunings.push({ name: 'Tuning ' + (n + 1), vals });
+    userTunings.push({ name: 'Tuning ' + (n + 1), vals });
     saveTunings();
     refreshTunSel('Tuning ' + (n + 1));
   });
   tunDel.addEventListener('click', () => {
-    if (!tunSel.value) return;
-    tunings = tunings.filter(t => t.name !== tunSel.value);
+    if (!tunSel.value || BUILTIN_TUNINGS.some(b => b.name === tunSel.value)) return;
+    userTunings = userTunings.filter(t => t.name !== tunSel.value);
     saveTunings();
     refreshTunSel('');
   });
   tunSel.addEventListener('change', () => {
     localStorage.setItem('sd3d-tuning-sel', tunSel.value);
-    const t = tunings.find(x => x.name === tunSel.value);
+    const t = allTunings().find(x => x.name === tunSel.value);
     if (!t) return;
     for (const id in ctl) if (t.vals[id] !== undefined) ctl[id].value = t.vals[id];
     readLight();
     saveLight();
     reset();
   });
-  refreshTunSel(localStorage.getItem('sd3d-tuning-sel') || '');
+  refreshTunSel(localStorage.getItem('sd3d-tuning-sel') ?? 'Tuning 1');
   const panel = document.getElementById('panel');
   const panelArrow = document.getElementById('panelArrow');
   const setPanel = closed => {
