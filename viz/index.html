@@ -335,6 +335,15 @@
   let trendsSm = null;      // smoothed series per section, cached per draw
   let trendsGeom = null;    // per-section layout, for hover
   let trendsHoverW = -1;    // hovered week index
+
+  // overlap-density color ramp: gray -> blue -> purple -> red -> yellow
+  const HEAT_STOPS = [[137, 135, 129], [42, 120, 214], [139, 58, 199], [227, 61, 61], [245, 211, 39]];
+  function heatColor(t) {
+    const x = Math.min(0.9999, Math.max(0, t)) * (HEAT_STOPS.length - 1);
+    const i = Math.floor(x), f = x - i;
+    const a = HEAT_STOPS[i], b = HEAT_STOPS[i + 1];
+    return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)}, ${Math.round(a[1] + (b[1] - a[1]) * f)}, ${Math.round(a[2] + (b[2] - a[2]) * f)})`;
+  }
   // every item ranked by score, for the "Score distribution" view
   const distItems = items.slice().sort((a, b) => b.score - a.score || a.time - b.time);
   distItems.forEach((d, i) => { d.drank = i + 1; });
@@ -766,19 +775,40 @@
       }
       ctx.stroke();
     } else {
-    // scatter dots (Posts by Score / Posts by Length)
-    ctx.globalAlpha = 0.55;
-    ctx.fillStyle = C.dot;
+    // scatter dots (Posts by Score / Posts by Length), colored by local
+    // overlap density: lone dots stay gray, then blue -> purple -> red ->
+    // yellow at the densest pileups (log-scaled to the current view's max)
+    const CELLD = 7;
+    const bins = new Map();
+    const binKey = d => Math.round(d.px / CELLD) * 100000 + Math.round(d.py / CELLD);
     for (const d of activeList()) {
-      const px = xPix(xv(d)), py = yPix(yv(d));
-      d.px = px; d.py = py;
-      if (px < M.left - 6 || px > W - M.right + 6 || py < M.top - 6 || py > H - M.bottom + 6) continue;
-      if (d.type === 'post') {
-        ctx.fillRect(px - 3, py - 3, 6, 6);
-      } else {
-        ctx.beginPath();
-        ctx.arc(px, py, 2.6, 0, 6.2832);
-        ctx.fill();
+      d.px = xPix(xv(d));
+      d.py = yPix(yv(d));
+      bins.set(binKey(d), (bins.get(binKey(d)) || 0) + 1);
+    }
+    let maxC = 1;
+    for (const v of bins.values()) if (v > maxC) maxC = v;
+    const lgMax = Math.log(maxC);
+    const LEVELS = 24;
+    const buckets = Array.from({ length: LEVELS + 1 }, () => []);
+    for (const d of activeList()) {
+      if (d.px < M.left - 6 || d.px > W - M.right + 6 || d.py < M.top - 6 || d.py > H - M.bottom + 6) continue;
+      const t = maxC > 1 ? Math.log(bins.get(binKey(d))) / lgMax : 0;
+      buckets[Math.round(t * LEVELS)].push(d);
+    }
+    for (let L = 0; L <= LEVELS; L++) {   // cold first, hot on top
+      if (!buckets[L].length) continue;
+      const t = L / LEVELS;
+      ctx.fillStyle = heatColor(t);
+      ctx.globalAlpha = 0.55 + 0.35 * t;
+      for (const d of buckets[L]) {
+        if (d.type === 'post') {
+          ctx.fillRect(d.px - 3, d.py - 3, 6, 6);
+        } else {
+          ctx.beginPath();
+          ctx.arc(d.px, d.py, 2.6, 0, 6.2832);
+          ctx.fill();
+        }
       }
     }
     } // end non-dist marks
