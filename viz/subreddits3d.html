@@ -114,7 +114,6 @@
 
   // ---- scene dimensions ----
   const CW = 2000, CH = 1000, DEPTH = 300, BW = -(DEPTH + 2);
-  const zOf = k => -(k / (nB - 1)) * DEPTH;   // sheet 0 flush with the front, top sheet recessed
   const X = w => (w - wA) / (wB - wA) * CW;
   const yScale = CH / peak;
   const nCols = wB - wA + 1;
@@ -129,13 +128,20 @@
       }
     }
   }
-  const bndAt = (k, x) => {
-    const u = Math.max(0, Math.min(1, x / CW)) * (nCols - 1);
-    const i = Math.floor(u), f = u - i;
-    const a = bndData[k * nCols + i];
-    const b = bndData[k * nCols + Math.min(i + 1, nCols - 1)];
-    return a + (b - a) * f;
-  };
+  // normalized cumulative boundaries: row k = share of bands 0..k at each week
+  const normData = new Float32Array(nCols * nB);
+  {
+    for (let w = wA; w <= wB; w++) {
+      const tot = Math.max(totals[w], 1e-6);
+      let c = 0;
+      for (let k = 0; k < nB; k++) {
+        c += sm[k][w];
+        normData[k * nCols + (w - wA)] = Math.min(1, c / tot);
+      }
+    }
+  }
+  // front depth of band k's sheet at week column c
+  const zAt = (k, c) => k === 0 ? 0 : -normData[(k - 1) * nCols + c] * DEPTH;
 
   // ---- ink texture: year labels on the mat + band label glyphs for the overlay ----
   const UV_X0 = -120, UV_X1 = CW + 120, UV_Y0 = -300, UV_Y1 = CH + 60;
@@ -169,7 +175,7 @@
       const hi = bndData[k * nCols + (w - wA)];
       const share = (hi - lo) / CH;
       if (share > best.share && X(w) > 120 && X(w) < CW - 120) {
-        best = { share, x: X(w), y: (lo + hi) / 2 };
+        best = { share, x: X(w), y: (lo + hi) / 2, c: w - wA };
       }
     }
     if (best.share > 0.03) {
@@ -177,7 +183,7 @@
       const text = 'r/' + topSubs[k];
       ig.fillText(text, toTX(best.x), toTY(best.y));
       const wChart = ig.measureText(text).width / texScale;
-      labelRects.push({ x: best.x, y: best.y, w: wChart + 10, h: 40, z: zOf(k) + 1 });
+      labelRects.push({ x: best.x, y: best.y, w: wChart + 10, h: 40, z: zAt(k, best.c) + 2 });
     }
   }
 
@@ -199,7 +205,8 @@
   const traceSrc = `#version 300 es
   precision highp float;
   precision highp int;
-  uniform sampler2D uB;      // boundaries, nCols x nB, chart units
+  uniform sampler2D uB;      // absolute top boundaries, nCols x nB, chart units
+  uniform sampler2D uN;      // normalized cumulative boundaries, nCols x nB, 0..1
   uniform sampler2D uInk;
   uniform sampler2D uPrev;
   uniform vec3 uCols[${nB}];
@@ -232,13 +239,22 @@
   }
   float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
 
-  float zOf(int k) { return -(float(k) / float(NB - 1)) * ${DEPTH.toFixed(1)}; }
-  float Bnd(int k, float x) {
-    float u = clamp(x / CW, 0.0, 1.0) * float(${nCols - 1});
+  const float DEP = ${DEPTH.toFixed(1)};
+  const int NC = ${nCols};
+  float rowAt(sampler2D tex, int k, float x) {
+    float u = clamp(x / CW, 0.0, 1.0) * float(NC - 1);
     int i = int(floor(u));
-    int i1 = min(i + 1, ${nCols - 1});
+    int i1 = min(i + 1, NC - 1);
     float f = u - float(i);
-    return mix(texelFetch(uB, ivec2(i, k), 0).r, texelFetch(uB, ivec2(i1, k), 0).r, f);
+    return mix(texelFetch(tex, ivec2(i, k), 0).r, texelFetch(tex, ivec2(i1, k), 0).r, f);
+  }
+  // absolute top boundary of band k (front-view stacking)
+  float topAbs(int k, float x) { return rowAt(uB, k, x); }
+  // depth of band k's front sheet: its normalized cumulative start share
+  float Zk(int k, float x) {
+    if (k <= 0) return 0.0;
+    if (k >= NB) return BWZ;
+    return -rowAt(uN, k - 1, x) * DEP;
   }
 
   // kind: 0 sky, 1 mat, 2 white wall, 3 sheet, 4 riser
@@ -296,44 +312,123 @@
         }
       }
     }
-    // sheets and risers, walked in ray order through the z planes
-    int s = d.z < 0.0 ? 1 : -1;
-    int k0 = d.z < 0.0 ? 0 : NB - 1;
-    for (int i = 0; i < NB; i++) {
-      int k = k0 + s * i;
-      float tk = (zOf(k) - o.z) / d.z;
-      if (tk > h.t) break;
-      vec3 p = o + d * tk;
-      if (tk > eps && p.x >= 0.0 && p.x <= CW && p.y >= 0.0 && p.y <= Bnd(k, p.x)) {
-        h.t = tk; h.kind = 3; h.alb = uCols[k];
-        h.n = vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
-        return h;
+    // The stack is a stepped heightfield y = H(x, z): within slab k
+    // (Zk(k+1,x) <= z <= Zk(k,x)) the solid rises to topAbs(k, x).
+    // Sheet fronts are the slab z-boundaries, riser tops the y-boundary.
+    // Walk the ray through weekly x-columns; inside a column every
+    // boundary is linear in t, so all crossings solve exactly.
+    {
+      float t0 = eps, t1 = h.t;
+      if (abs(d.x) > 1e-7) {
+        float ta = -o.x / d.x, tb = (CW - o.x) / d.x;
+        t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
+      } else if (o.x < 0.0 || o.x > CW) t1 = -1.0;
+      if (abs(d.y) > 1e-7) {
+        float ta = -o.y / d.y, tb = (CH - o.y) / d.y;
+        t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
+      } else if (o.y < 0.0 || o.y > CH) t1 = -1.0;
+      {
+        float ta = -o.z / d.z, tb = (BWZ - o.z) / d.z;
+        t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
       }
-      if (i < NB - 1) {
-        int kn = k + s;
-        int r = s > 0 ? k : kn;        // riser r spans z(r+1) .. z(r)
-        float tn = (zOf(kn) - o.z) / d.z;
-        float ta = max(tk, eps), tb2 = tn;
-        vec3 pa = o + d * ta;
-        vec3 pb = o + d * tb2;
-        float fa = pa.y - Bnd(r, pa.x);
-        float fb = pb.y - Bnd(r, pb.x);
-        if (fa * fb < 0.0) {
-          for (int j = 0; j < 10; j++) {
-            float tm = 0.5 * (ta + tb2);
-            vec3 pm = o + d * tm;
-            float fm = pm.y - Bnd(r, pm.x);
-            if (fm * fa >= 0.0) { ta = tm; fa = fm; } else tb2 = tm;
+      if (t1 > t0) {
+        float colW = CW / float(NC - 1);
+        float tcur = t0;
+        vec3 p0 = o + d * t0;
+        int ic = clamp(int(floor(p0.x / colW)), 0, NC - 2);
+        // slab at the entry point: largest k with Zk(k) >= z (-1 = in front)
+        int kCur = -1;
+        if (p0.z <= 0.0) {
+          int lo = 0, hi = NB - 1;
+          for (int j = 0; j < 7; j++) {
+            if (lo >= hi) break;
+            int mid = (lo + hi + 1) >> 1;
+            if (Zk(mid, p0.x) >= p0.z) lo = mid; else hi = mid - 1;
           }
-          float tm = 0.5 * (ta + tb2);
-          vec3 pm = o + d * tm;
-          if (tm > eps && tm < h.t && pm.x >= 0.0 && pm.x <= CW && pm.y >= 0.0 && pm.y <= CH) {
-            float db = (Bnd(r, min(pm.x + 4.0, CW)) - Bnd(r, max(pm.x - 4.0, 0.0))) / 8.0;
-            vec3 n = normalize(vec3(-db, 1.0, 0.0));
-            if (dot(n, d) > 0.0) n = -n;
-            h.t = tm; h.kind = 4; h.n = n; h.alb = uCols[r] * 0.92;
-            return h;
+          kCur = lo;
+        }
+        for (int it = 0; it < 2200; it++) {
+          float x0c = float(ic) * colW;
+          float tExit; int iNext;
+          if (d.x > 1e-7) { tExit = (x0c + colW - o.x) / d.x; iNext = ic + 1; }
+          else if (d.x < -1e-7) { tExit = (x0c - o.x) / d.x; iNext = ic - 1; }
+          else { tExit = t1; iNext = -1; }
+          float tEnd = min(tExit, t1);
+          vec3 pa = o + d * tcur;
+          vec3 pb = o + d * tEnd;
+          float tEvent = 1e30; int kNext = kCur;
+          if (kCur >= 0) {
+            float ga = pa.z - Zk(kCur, pa.x);
+            float gb = pb.z - Zk(kCur, pb.x);
+            if (ga < 0.0 && gb > 0.0) { tEvent = tcur + (tEnd - tcur) * ga / (ga - gb); kNext = kCur - 1; }
           }
+          if (kCur < NB - 1) {
+            float ga = pa.z - Zk(kCur + 1, pa.x);
+            float gb = pb.z - Zk(kCur + 1, pb.x);
+            if (ga >= 0.0 && gb < 0.0) {
+              float tt = ga == gb ? tcur : tcur + (tEnd - tcur) * ga / (ga - gb);
+              if (tt < tEvent) { tEvent = tt; kNext = kCur + 1; }
+            }
+          }
+          float tSub = min(tEvent, tEnd);
+          if (kCur >= 0) {
+            vec3 ps = o + d * tSub;
+            float fa = pa.y - topAbs(kCur, pa.x);
+            float fb = ps.y - topAbs(kCur, ps.x);
+            if (fa > 0.0 && fb <= 0.0) {
+              float tt = tcur + (tSub - tcur) * fa / (fa - fb);
+              vec3 ph = o + d * tt;
+              float db = (topAbs(kCur, min(ph.x + 4.0, CW)) - topAbs(kCur, max(ph.x - 4.0, 0.0))) / 8.0;
+              vec3 n = normalize(vec3(-db, 1.0, 0.0));
+              if (dot(n, d) > 0.0) n = -n;
+              h.t = tt; h.kind = 4; h.n = n; h.alb = uCols[kCur];
+              return h;
+            }
+          }
+          if (tEvent <= tEnd) {
+            vec3 pe = o + d * tEvent;
+            if (kNext > kCur) {
+              // dormant bands have exactly-coincident boundaries; jump the
+              // whole cluster: deepest slab whose front is at/above pe.z
+              int lo = kCur + 1, hi = NB - 1;
+              for (int j = 0; j < 7; j++) {
+                if (lo >= hi) break;
+                int mid = (lo + hi + 1) >> 1;
+                if (Zk(mid, pe.x) >= pe.z) lo = mid; else hi = mid - 1;
+              }
+              kNext = lo;
+              if (pe.y <= topAbs(kNext, pe.x)) {
+                // frontmost band in the cluster whose top reaches the ray
+                int lo2 = kCur + 1, hi2 = kNext;
+                for (int j = 0; j < 7; j++) {
+                  if (lo2 >= hi2) break;
+                  int mid = (lo2 + hi2) >> 1;
+                  if (topAbs(mid, pe.x) >= pe.y) hi2 = mid; else lo2 = mid + 1;
+                }
+                float dz = (Zk(lo2, min(pe.x + 4.0, CW)) - Zk(lo2, max(pe.x - 4.0, 0.0))) / 8.0;
+                vec3 n = normalize(vec3(-dz, 0.0, 1.0));
+                if (dot(n, d) > 0.0) n = -n;
+                h.t = tEvent; h.kind = 3; h.n = n; h.alb = uCols[lo2];
+                return h;
+              }
+            } else {
+              // moving frontward: land in front of the whole cluster
+              int lo = 0, hi = kCur;
+              for (int j = 0; j < 7; j++) {
+                if (lo >= hi) break;
+                int mid = (lo + hi) >> 1;
+                if (Zk(mid, pe.x) <= pe.z) hi = mid; else lo = mid + 1;
+              }
+              kNext = lo - 1;
+            }
+            kCur = kNext;
+            tcur = tEvent;
+            continue;
+          }
+          if (tEnd >= t1) break;
+          tcur = tEnd;
+          if (iNext < 0 || iNext > NC - 2) break;
+          ic = iNext;
         }
       }
     }
@@ -433,6 +528,7 @@
     return t;
   };
   const texB = mkTex(nCols, nB, gl.R32F, gl.RED, gl.FLOAT, bndData);
+  const texN = mkTex(nCols, nB, gl.R32F, gl.RED, gl.FLOAT, normData);
   const texInk = (() => {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
@@ -593,6 +689,7 @@
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texB); gl.uniform1i(U('uB'), 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texInk); gl.uniform1i(U('uInk'), 1);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, accTex[1 - flip]); gl.uniform1i(U('uPrev'), 2);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, texN); gl.uniform1i(U('uN'), 3);
     gl.uniform3fv(U('uCols'), colFlat);
     gl.uniform2f(U('uSize'), W, H);
     gl.uniform3fv(U('uEye'), cam.eye);
