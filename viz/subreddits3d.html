@@ -34,6 +34,22 @@
     width: 28px; height: 18px; padding: 0;
     border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
   }
+  #tunRow { border-top: 1px solid rgba(11, 11, 11, 0.1); padding-top: 8px; margin-top: 2px; }
+  #tunRow select {
+    flex: 1; min-width: 0;
+    font: inherit;
+    padding: 2px 4px;
+    border: 1px solid rgba(11, 11, 11, 0.2); border-radius: 4px;
+    background: #fff; color: inherit;
+  }
+  #tunRow button {
+    font: inherit;
+    padding: 2px 8px;
+    border: 1px solid rgba(11, 11, 11, 0.2); border-radius: 4px;
+    background: #fff; color: inherit;
+    cursor: pointer;
+  }
+  #tunRow button:hover { border-color: rgba(11, 11, 11, 0.45); }
 </style>
 </head>
 <body>
@@ -47,8 +63,16 @@
     <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="32"></div>
     <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff1e0"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="2.6"></div>
     <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#cdd8e4"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="0.9"></div>
-    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#eeeeee"></div>
+    <div class="prow"><span>opacity</span><input type="range" id="cOpac" min="0" max="100" value="45"></div>
+    <div class="prow"><span>frost</span><input type="range" id="cFrost" min="0" max="100" value="60"></div>
+    <div class="prow"><span>bar scale</span><input type="range" id="cScale" min="5" max="150" value="100"></div>
+    <div class="prow"><span>ground</span><input type="color" id="cBack" value="#eeeeee"></div>
     <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#616161"></div>
+    <div class="prow" id="tunRow">
+      <select id="tunSel"></select>
+      <button id="tunSave" title="Save current settings as a new tuning">save</button>
+      <button id="tunDel" title="Delete the selected tuning">delete</button>
+    </div>
   </div>
 </div>
 <script src="data.js"></script>
@@ -98,8 +122,6 @@
   for (let k = 0; k < nB; k++) for (let w = 0; w < nW; w++) totals[w] += sm[k][w];
   let wA = 0; while (wA < nW && totals[wA] < 1e-3) wA++;
   let wB = nW - 1; while (wB > wA && totals[wB] < 1e-3) wB--;
-  let peak = 1;
-  for (let w = wA; w <= wB; w++) if (totals[w] > peak) peak = totals[w];
 
   // golden-angle palette, matching the 2D view
   function hslToRgb(h, s, l) {
@@ -113,49 +135,47 @@
   const bandColor = k => hslToRgb((k * 137.508) % 360, (55 + (k % 2) * 12) / 100, (50 + (k % 3) * 6) / 100);
 
   // ---- scene dimensions ----
-  const CW = 2000, CH = 1000, DEPTH = 300, BW = -(DEPTH + 2);
+  // Ground plane at y=0 in XZ space. Each subreddit is its own slice: an
+  // extruded area chart (time along x, height in y, thickness TH along z),
+  // laid out back from z=0 with a GAP between slices.
+  const CW = 2000, HMAX = 380, TH = 11, GAP = 25;
+  const P = TH + GAP;
+  const TOTAL = (nB - 1) * P + TH;
   const X = w => (w - wA) / (wB - wA) * CW;
-  const yScale = CH / peak;
   const nCols = wB - wA + 1;
-  // boundary texture rows: row k = top boundary of sheet k, in chart units
-  const bndData = new Float32Array(nCols * nB);
-  {
+  let peakSub = 1e-6;
+  for (let k = 0; k < nB; k++) {
+    for (let w = wA; w <= wB; w++) if (sm[k][w] > peakSub) peakSub = sm[k][w];
+  }
+  const yScale = HMAX / peakSub;
+  // height texture rows: row k = slice k's height at each week, world units.
+  // Sub-unit heights (pure smoothing tails) are culled to exact zero so dead
+  // weeks leave clean ground instead of a coplanar film over the floor.
+  const hData = new Float32Array(nCols * nB);
+  for (let k = 0; k < nB; k++) {
     for (let w = wA; w <= wB; w++) {
-      let c = 0;
-      for (let k = 0; k < nB; k++) {
-        c += sm[k][w];
-        bndData[k * nCols + (w - wA)] = c * yScale;
-      }
+      const hv = sm[k][w] * yScale;
+      hData[k * nCols + (w - wA)] = hv < 1.0 ? 0 : hv;
     }
   }
-  // normalized cumulative boundaries: row k = share of bands 0..k at each week
-  const normData = new Float32Array(nCols * nB);
-  {
-    for (let w = wA; w <= wB; w++) {
-      const tot = Math.max(totals[w], 1e-6);
-      let c = 0;
-      for (let k = 0; k < nB; k++) {
-        c += sm[k][w];
-        normData[k * nCols + (w - wA)] = Math.min(1, c / tot);
-      }
-    }
-  }
-  // front depth of band k's sheet at week column c
-  const zAt = (k, c) => k === 0 ? 0 : -normData[(k - 1) * nCols + c] * DEPTH;
+  // z center of slice k
+  const sliceZ = k => -(k * P + TH / 2);
 
-  // ---- ink texture: year labels on the mat + band label glyphs for the overlay ----
-  const UV_X0 = -120, UV_X1 = CW + 120, UV_Y0 = -300, UV_Y1 = CH + 60;
-  const TEXW = 2048;
-  const TEXH = Math.round(TEXW * (UV_Y1 - UV_Y0) / (UV_X1 - UV_X0));
-  const texScale = TEXW / (UV_X1 - UV_X0);
-  const toTX = x => (x - UV_X0) * texScale;
-  const toTY = y => (UV_Y1 - y) * texScale;
+  // ---- ink texture: labels painted on the ground plane ----
+  // years along the front edge, subreddit names beside each slice
+  const IX0 = -460, IX1 = CW + 60, IZF = 150, IZB = -(TOTAL + 60);
+  const TEXW = 3072;
+  const TEXH = Math.round(TEXW * (IZF - IZB) / (IX1 - IX0));
+  const texScale = TEXW / (IX1 - IX0);
+  const toTX = x => (x - IX0) * texScale;
+  // canvas y runs back-to-front so glyph tops point away from a front viewer
+  const toTZ = z => (z - IZB) * texScale;
   const inkCv = document.createElement('canvas');
   inkCv.width = TEXW; inkCv.height = TEXH;
   const ig = inkCv.getContext('2d');
   ig.textBaseline = 'middle';
-  ig.fillStyle = 'rgb(255, 0, 0)';   // red 255 = owned by the mat
-  ig.font = `600 ${Math.round(30 * texScale)}px system-ui, sans-serif`;
+  ig.fillStyle = '#000';   // only alpha is read; color comes from the labels control
+  ig.font = `600 ${Math.round(34 * texScale)}px system-ui, sans-serif`;
   ig.textAlign = 'center';
   const y0year = new Date(w0 + wA * MS_WEEK).getUTCFullYear() + 1;
   const y1year = new Date(w0 + wB * MS_WEEK).getUTCFullYear();
@@ -163,28 +183,12 @@
     const t = Date.UTC(y, 0, 1);
     const w = (t - w0) / MS_WEEK;
     if (w < wA || w > wB) continue;
-    ig.fillText(String(y), toTX(X(w)), toTY(-90));
+    ig.fillText(String(y), toTX(X(w)), toTZ(75));
   }
-  // band labels (id 200: matched by no surface, drawn via the overlay pass)
-  const labelRects = [];
-  ig.font = `600 ${Math.round(26 * texScale)}px system-ui, sans-serif`;
-  for (let k = 0; k < Math.min(10, nB); k++) {
-    let best = { share: 0 };
-    for (let w = wA; w <= wB; w++) {
-      const lo = k === 0 ? 0 : bndData[(k - 1) * nCols + (w - wA)];
-      const hi = bndData[k * nCols + (w - wA)];
-      const share = (hi - lo) / CH;
-      if (share > best.share && X(w) > 120 && X(w) < CW - 120) {
-        best = { share, x: X(w), y: (lo + hi) / 2, c: w - wA };
-      }
-    }
-    if (best.share > 0.03) {
-      ig.fillStyle = 'rgb(200, 0, 0)';
-      const text = 'r/' + topSubs[k];
-      ig.fillText(text, toTX(best.x), toTY(best.y));
-      const wChart = ig.measureText(text).width / texScale;
-      labelRects.push({ x: best.x, y: best.y, w: wChart + 10, h: 40, z: zAt(k, best.c) + 2 });
-    }
+  ig.font = `600 ${Math.round(22 * texScale)}px system-ui, sans-serif`;
+  ig.textAlign = 'right';
+  for (let k = 0; k < nB; k++) {
+    ig.fillText('r/' + topSubs[k], toTX(-35), toTZ(sliceZ(k)));
   }
 
   // ---- gl ----
@@ -205,8 +209,7 @@
   const traceSrc = `#version 300 es
   precision highp float;
   precision highp int;
-  uniform sampler2D uB;      // absolute top boundaries, nCols x nB, chart units
-  uniform sampler2D uN;      // normalized cumulative boundaries, nCols x nB, 0..1
+  uniform sampler2D uH;      // per-subreddit heights, nCols x nB, world units
   uniform sampler2D uInk;
   uniform sampler2D uPrev;
   uniform vec3 uCols[${nB}];
@@ -223,14 +226,21 @@
   uniform vec3 uAlbB;
   uniform vec3 uLblC;
   uniform float uSunCos;
+  uniform float uTrans;
+  uniform float uFrostCos;
+  uniform float uHScale;
   out vec4 outc;
 
   const float CW = ${CW.toFixed(1)};
-  const float CH = ${CH.toFixed(1)};
-  const float BWZ = ${BW.toFixed(1)};
+  const float HMAX = ${(HMAX * 1.5).toFixed(1)};   // box height: peak at max bar scale
+  const float TH = ${TH.toFixed(1)};
+  const float PP = ${P.toFixed(1)};
+  const float TOTU = ${TOTAL.toFixed(1)};
   const int NB = ${nB};
+  const int NC = ${nCols};
   const float PI = 3.14159265;
-  const vec4 UVR = vec4(${UV_X0.toFixed(1)}, ${UV_Y0.toFixed(1)}, ${(1 / (UV_X1 - UV_X0)).toExponential(6)}, ${(1 / (UV_Y1 - UV_Y0)).toExponential(6)});
+  const float HMIN = 0.5;   // solid thinner than this is treated as empty
+  const vec4 INKR = vec4(${IX0.toFixed(1)}, ${IZB.toFixed(1)}, ${(1 / (IX1 - IX0)).toExponential(6)}, ${(1 / (IZF - IZB)).toExponential(6)});
 
   uint pcg(inout uint s) {
     s = s * 747796405u + 2891336453u;
@@ -239,202 +249,172 @@
   }
   float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
 
-  const float DEP = ${DEPTH.toFixed(1)};
-  const int NC = ${nCols};
-  float rowAt(sampler2D tex, int k, float x) {
+  float hK(int k, float x) {
     float u = clamp(x / CW, 0.0, 1.0) * float(NC - 1);
     int i = int(floor(u));
     int i1 = min(i + 1, NC - 1);
     float f = u - float(i);
-    return mix(texelFetch(tex, ivec2(i, k), 0).r, texelFetch(tex, ivec2(i1, k), 0).r, f);
-  }
-  // absolute top boundary of band k (front-view stacking)
-  float topAbs(int k, float x) { return rowAt(uB, k, x); }
-  // depth of band k's front sheet: its normalized cumulative start share
-  float Zk(int k, float x) {
-    if (k <= 0) return 0.0;
-    if (k >= NB) return BWZ;
-    return -rowAt(uN, k - 1, x) * DEP;
+    return mix(texelFetch(uH, ivec2(i, k), 0).r, texelFetch(uH, ivec2(i1, k), 0).r, f) * uHScale;
   }
 
-  // kind: 0 sky, 1 mat, 2 white wall, 3 sheet, 4 riser
+  // kind: 0 sky, 1 ground, 3 slice
   struct HitInfo { float t; vec3 n; vec3 alb; int kind; };
-  HitInfo trace(vec3 o, vec3 dIn) {
+  HitInfo trace(vec3 o, vec3 d, int budget) {
     HitInfo h;
-    h.t = 1e30; h.kind = 0; h.n = vec3(0.0, 0.0, 1.0); h.alb = vec3(0.0);
-    vec3 d = dIn;
-    if (abs(d.z) < 1e-5) d.z = d.z < 0.0 ? -1e-5 : 1e-5;
+    h.t = 1e30; h.kind = 0; h.n = vec3(0.0, 1.0, 0.0); h.alb = vec3(0.0);
     float eps = 0.05;
-    // mat plane z=0 (everything outside the opening) and back wall
-    {
-      float t = -o.z / d.z;
-      if (t > eps && t < h.t) {
-        vec2 p = o.xy + d.xy * t;
-        if (!(p.x > 0.0 && p.x < CW && p.y > 0.0 && p.y < CH)) {
-          h.t = t; h.kind = 1; h.n = vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
-        }
-      }
-      float tb = (BWZ - o.z) / d.z;
-      if (tb > eps && tb < h.t) {
-        vec2 p = o.xy + d.xy * tb;
-        if (p.x >= 0.0 && p.x <= CW && p.y >= 0.0 && p.y <= CH) {
-          h.t = tb; h.kind = 2; h.n = vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
-        }
-      }
+    // ground plane y=0
+    if (d.y < -1e-7) {
+      float t = -o.y / d.y;
+      if (t > eps) { h.t = t; h.kind = 1; }
     }
-    // ceiling and floor of the recess
-    if (abs(d.y) > 1e-7) {
-      float t = (CH - o.y) / d.y;
-      if (t > eps && t < h.t) {
-        vec3 p = o + d * t;
-        if (p.x >= 0.0 && p.x <= CW && p.z <= 0.0 && p.z >= BWZ) {
-          h.t = t; h.kind = 2; h.n = vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0);
-        }
-      }
-      float tf = -o.y / d.y;
-      if (tf > eps && tf < h.t) {
-        vec3 p = o + d * tf;
-        if (p.x >= 0.0 && p.x <= CW && p.z <= 0.0 && p.z >= BWZ) {
-          h.t = tf; h.kind = 2; h.n = vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0);
-        }
-      }
-    }
-    // side walls
+    // slice field bounding box: x in [0,CW], y in [0,HMAX], u = -z in [0,TOTU].
+    // Track which axis the ray entered through — a cap face if it lands
+    // inside a slice's solid.
+    float t0 = eps, t1 = h.t;
+    int axisEnter = -1;
     if (abs(d.x) > 1e-7) {
-      for (int sw = 0; sw < 2; sw++) {
-        float wx = sw == 0 ? 0.0 : CW;
-        float t = (wx - o.x) / d.x;
-        if (t > eps && t < h.t) {
-          vec3 p = o + d * t;
-          if (p.y >= 0.0 && p.y <= CH && p.z <= 0.0 && p.z >= BWZ) {
-            h.t = t; h.kind = 2; h.n = vec3(d.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
-          }
-        }
-      }
-    }
-    // The stack is a stepped heightfield y = H(x, z): within slab k
-    // (Zk(k+1,x) <= z <= Zk(k,x)) the solid rises to topAbs(k, x).
-    // Sheet fronts are the slab z-boundaries, riser tops the y-boundary.
-    // Walk the ray through weekly x-columns; inside a column every
-    // boundary is linear in t, so all crossings solve exactly.
+      float ta = -o.x / d.x, tb = (CW - o.x) / d.x;
+      float lo = min(ta, tb);
+      if (lo > t0) { t0 = lo; axisEnter = 0; }
+      t1 = min(t1, max(ta, tb));
+    } else if (o.x < 0.0 || o.x > CW) return h;
+    if (abs(d.y) > 1e-7) {
+      float ta = -o.y / d.y, tb = (HMAX - o.y) / d.y;
+      float lo = min(ta, tb);
+      if (lo > t0) { t0 = lo; axisEnter = 1; }
+      t1 = min(t1, max(ta, tb));
+    } else if (o.y < 0.0 || o.y > HMAX) return h;
+    float uo = -o.z, du = -d.z;
+    if (abs(du) > 1e-7) {
+      float ta = -uo / du, tb = (TOTU - uo) / du;
+      float lo = min(ta, tb);
+      if (lo > t0) { t0 = lo; axisEnter = 2; }
+      t1 = min(t1, max(ta, tb));
+    } else if (uo < 0.0 || uo > TOTU) return h;
+    if (t1 <= t0) return h;
+
+    // Walk the ray through weekly x-columns and slice/gap z-bands.  Within a
+    // segment (constant column, constant band) the top surface y = hK(k, x)
+    // is linear in t, so every crossing solves exactly.  Both the column and
+    // the band are tracked as discrete indices advanced one step per event —
+    // never re-derived from float positions, which stalls near boundaries
+    // when a ULP at camera distances exceeds any epsilon step.
+    float colW = CW / float(NC - 1);
+    vec3 p0 = o + d * t0;
+    int ic = clamp(int(floor(p0.x / colW)), 0, NC - 2);
+    // band region index: even 2k = slice k, odd 2k+1 = gap behind slice k
+    int ir;
     {
-      float t0 = eps, t1 = h.t;
-      if (abs(d.x) > 1e-7) {
-        float ta = -o.x / d.x, tb = (CW - o.x) / d.x;
-        t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
-      } else if (o.x < 0.0 || o.x > CW) t1 = -1.0;
-      if (abs(d.y) > 1e-7) {
-        float ta = -o.y / d.y, tb = (CH - o.y) / d.y;
-        t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
-      } else if (o.y < 0.0 || o.y > CH) t1 = -1.0;
-      {
-        // domain starts 1 unit in front of z=0 so band 0's sheet (exactly at
-        // z=0) is always crossed as an interior event, never clipped onto
-        float ta = (1.0 - o.z) / d.z, tb = (BWZ - o.z) / d.z;
-        t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
+      float u0 = uo + du * t0;
+      int k0 = clamp(int(floor(u0 / PP)), 0, NB - 1);
+      ir = 2 * k0 + ((u0 - float(k0) * PP) > TH ? 1 : 0);
+    }
+    float tcur = t0;
+    for (int it = 0; it < budget; it++) {
+      float x0c = float(ic) * colW;
+      float tExitX; int iNext;
+      if (d.x > 1e-7) { tExitX = (x0c + colW - o.x) / d.x; iNext = ic + 1; }
+      else if (d.x < -1e-7) { tExitX = (x0c - o.x) / d.x; iNext = ic - 1; }
+      else { tExitX = 1e30; iNext = -1; }
+      float tExitU = 1e30;
+      if (abs(du) > 1e-7) {
+        int kr = ir >> 1;
+        float ub = du > 0.0
+          ? ((ir & 1) == 0 ? float(kr) * PP + TH : float(kr + 1) * PP)
+          : ((ir & 1) == 0 ? float(kr) * PP : float(kr) * PP + TH);
+        tExitU = (ub - uo) / du;
       }
-      if (t1 > t0) {
-        float colW = CW / float(NC - 1);
-        float tcur = t0;
-        vec3 p0 = o + d * t0;
-        int ic = clamp(int(floor(p0.x / colW)), 0, NC - 2);
-        // slab at the entry point: largest k with Zk(k) >= z (-1 = in front)
-        int kCur = -1;
-        if (p0.z <= 0.0) {
-          int lo = 0, hi = NB - 1;
-          for (int j = 0; j < 7; j++) {
-            if (lo >= hi) break;
-            int mid = (lo + hi + 1) >> 1;
-            if (Zk(mid, p0.x) >= p0.z) lo = mid; else hi = mid - 1;
-          }
-          kCur = lo;
+      float tEnd = min(min(tExitX, tExitU), t1);
+      int k = ir >> 1;
+      if ((ir & 1) == 0 && tEnd > tcur) {
+        vec3 pa = o + d * tcur;
+        float ga = pa.y - hK(k, pa.x);
+        if (ga <= 0.0 && hK(k, pa.x) > HMIN) {
+          // segment starts inside the solid: the ray came in through a flat
+          // cap face (front/back in z, or an end face in x)
+          vec3 n = axisEnter == 0 ? vec3(d.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0)
+                                  : vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
+          h.t = tcur; h.kind = 3; h.n = n; h.alb = uCols[k];
+          return h;
         }
-        for (int it = 0; it < 2200; it++) {
-          float x0c = float(ic) * colW;
-          float tExit; int iNext;
-          if (d.x > 1e-7) { tExit = (x0c + colW - o.x) / d.x; iNext = ic + 1; }
-          else if (d.x < -1e-7) { tExit = (x0c - o.x) / d.x; iNext = ic - 1; }
-          else { tExit = t1; iNext = -1; }
-          float tEnd = min(tExit, t1);
-          vec3 pa = o + d * tcur;
-          vec3 pb = o + d * tEnd;
-          float tEvent = 1e30; int kNext = kCur;
-          if (kCur >= 0) {
-            float ga = pa.z - Zk(kCur, pa.x);
-            float gb = pb.z - Zk(kCur, pb.x);
-            if (ga < 0.0 && gb > 0.0) { tEvent = tcur + (tEnd - tcur) * ga / (ga - gb); kNext = kCur - 1; }
+        vec3 pb = o + d * tEnd;
+        float gb = pb.y - hK(k, pb.x);
+        if (ga > 0.0 && gb <= 0.0) {
+          float tt = tcur + (tEnd - tcur) * ga / (ga - gb);
+          if (o.y + d.y * tt > HMIN) {
+            vec3 ph = o + d * tt;
+            float db = (hK(k, min(ph.x + 4.0, CW)) - hK(k, max(ph.x - 4.0, 0.0))) / 8.0;
+            vec3 n = normalize(vec3(-db, 1.0, 0.0));
+            if (dot(n, d) > 0.0) n = -n;
+            h.t = tt; h.kind = 3; h.n = n; h.alb = uCols[k];
+            return h;
           }
-          if (kCur < NB - 1) {
-            float ga = pa.z - Zk(kCur + 1, pa.x);
-            float gb = pb.z - Zk(kCur + 1, pb.x);
-            if (ga >= 0.0 && gb < 0.0) {
-              float tt = ga == gb ? tcur : tcur + (tEnd - tcur) * ga / (ga - gb);
-              if (tt < tEvent) { tEvent = tt; kNext = kCur + 1; }
-            }
-          }
-          float tSub = min(tEvent, tEnd);
-          if (kCur >= 0) {
-            vec3 ps = o + d * tSub;
-            float fa = pa.y - topAbs(kCur, pa.x);
-            float fb = ps.y - topAbs(kCur, ps.x);
-            if (fa > 0.0 && fb <= 0.0) {
-              float tt = tcur + (tSub - tcur) * fa / (fa - fb);
-              vec3 ph = o + d * tt;
-              float db = (topAbs(kCur, min(ph.x + 4.0, CW)) - topAbs(kCur, max(ph.x - 4.0, 0.0))) / 8.0;
-              vec3 n = normalize(vec3(-db, 1.0, 0.0));
-              if (dot(n, d) > 0.0) n = -n;
-              h.t = tt; h.kind = 4; h.n = n; h.alb = uCols[kCur];
-              return h;
-            }
-          }
-          if (tEvent <= tEnd) {
-            vec3 pe = o + d * tEvent;
-            if (kNext > kCur) {
-              // dormant bands have exactly-coincident boundaries; jump the
-              // whole cluster: deepest slab whose front is at/above pe.z
-              int lo = kCur + 1, hi = NB - 1;
-              for (int j = 0; j < 7; j++) {
-                if (lo >= hi) break;
-                int mid = (lo + hi + 1) >> 1;
-                if (Zk(mid, pe.x) >= pe.z) lo = mid; else hi = mid - 1;
-              }
-              kNext = lo;
-              if (pe.y <= topAbs(kNext, pe.x)) {
-                // frontmost band in the cluster whose top reaches the ray
-                int lo2 = kCur + 1, hi2 = kNext;
-                for (int j = 0; j < 7; j++) {
-                  if (lo2 >= hi2) break;
-                  int mid = (lo2 + hi2) >> 1;
-                  if (topAbs(mid, pe.x) >= pe.y) hi2 = mid; else lo2 = mid + 1;
-                }
-                float dz = (Zk(lo2, min(pe.x + 4.0, CW)) - Zk(lo2, max(pe.x - 4.0, 0.0))) / 8.0;
-                vec3 n = normalize(vec3(-dz, 0.0, 1.0));
-                if (dot(n, d) > 0.0) n = -n;
-                h.t = tEvent; h.kind = 3; h.n = n; h.alb = uCols[lo2];
-                return h;
-              }
-            } else {
-              // moving frontward: land in front of the whole cluster
-              int lo = 0, hi = kCur;
-              for (int j = 0; j < 7; j++) {
-                if (lo >= hi) break;
-                int mid = (lo + hi) >> 1;
-                if (Zk(mid, pe.x) <= pe.z) hi = mid; else lo = mid + 1;
-              }
-              kNext = lo - 1;
-            }
-            kCur = kNext;
-            tcur = tEvent;
-            continue;
-          }
-          if (tEnd >= t1) break;
-          tcur = tEnd;
-          if (iNext < 0 || iNext > NC - 2) break;
-          ic = iNext;
         }
       }
+      if (tEnd >= t1 - 1e-6) break;
+      if (tEnd == tExitX) {
+        if (iNext < 0 || iNext > NC - 2) break;
+        ic = iNext; axisEnter = 0;
+      } else {
+        ir += du > 0.0 ? 1 : -1;
+        if (ir < 0 || ir > 2 * NB - 2) break;
+        axisEnter = 2;
+      }
+      tcur = tEnd;
     }
     return h;
+  }
+
+  // distance along the ray to the first point outside slice solid, for a
+  // ray that just passed inside one (frosted-glass transmission)
+  float traceExit(vec3 o, vec3 d, int budget) {
+    float uo = -o.z, du = -d.z;
+    float t1 = 1e30;
+    if (abs(d.x) > 1e-7) t1 = min(t1, max(-o.x / d.x, (CW - o.x) / d.x));
+    if (abs(d.y) > 1e-7) t1 = min(t1, max(-o.y / d.y, (HMAX - o.y) / d.y));
+    if (abs(du) > 1e-7) t1 = min(t1, max(-uo / du, (TOTU - uo) / du));
+    float colW = CW / float(NC - 1);
+    int ic = clamp(int(floor(o.x / colW)), 0, NC - 2);
+    int ir;
+    {
+      int k0 = clamp(int(floor(uo / PP)), 0, NB - 1);
+      ir = 2 * k0 + ((uo - float(k0) * PP) > TH ? 1 : 0);
+    }
+    float tcur = 0.0;
+    for (int it = 0; it < budget; it++) {
+      if ((ir & 1) == 1) return tcur;               // in a gap: outside
+      int k = ir >> 1;
+      vec3 pa = o + d * tcur;
+      float ga = pa.y - hK(k, pa.x);
+      if (ga > 0.0) return tcur;                    // above the surface
+      float x0c = float(ic) * colW;
+      float tExitX; int iNext;
+      if (d.x > 1e-7) { tExitX = (x0c + colW - o.x) / d.x; iNext = ic + 1; }
+      else if (d.x < -1e-7) { tExitX = (x0c - o.x) / d.x; iNext = ic - 1; }
+      else { tExitX = 1e30; iNext = -1; }
+      float tExitU = 1e30;
+      if (abs(du) > 1e-7) {
+        float ub = du > 0.0 ? float(k) * PP + TH : float(k) * PP;
+        tExitU = (ub - uo) / du;
+      }
+      float tEnd = min(min(tExitX, tExitU), t1);
+      vec3 pb = o + d * tEnd;
+      float gb = pb.y - hK(k, pb.x);
+      if (gb > 0.0 && tEnd > tcur) {
+        return tcur + (tEnd - tcur) * (0.0 - ga) / (gb - ga);   // out the top
+      }
+      if (tEnd >= t1 - 1e-6) return tEnd;
+      if (tEnd == tExitX) {
+        if (iNext < 0 || iNext > NC - 2) return tEnd;
+        ic = iNext;
+      } else {
+        ir += du > 0.0 ? 1 : -1;
+        if (ir < 0 || ir > 2 * NB - 2) return tEnd;
+      }
+      tcur = tEnd;
+    }
+    return tcur;
   }
 
   vec3 onbT(vec3 n) {
@@ -447,9 +427,9 @@
     vec3 t = onbT(n), b = cross(n, t);
     return normalize(t * (rr * cos(ph)) + b * (rr * sin(ph)) + n * sqrt(max(0.0, 1.0 - r1)));
   }
-  vec3 coneDir(vec3 dir, inout uint s) {
+  vec3 coneDir(vec3 dir, float cosMax, inout uint s) {
     float r1 = rnd(s), r2 = rnd(s);
-    float ct = mix(uSunCos, 1.0, r1);
+    float ct = mix(cosMax, 1.0, r1);
     float st = sqrt(max(0.0, 1.0 - ct * ct)), ph = 6.2831853 * r2;
     vec3 t = onbT(dir), b = cross(dir, t);
     return normalize(t * (st * cos(ph)) + b * (st * sin(ph)) + dir * ct);
@@ -464,26 +444,50 @@
     vec3 o = uEye;
     vec3 L = vec3(0.0);
     vec3 tp = vec3(1.0);
-    for (int bounce = 0; bounce < 2; bounce++) {
-      HitInfo h = trace(o, d);
+    int nDiff = 0;
+    for (int it2 = 0; it2 < 6; it2++) {
+      // primary rays get the full walk; secondary rays a short leash so
+      // grazing rays can't stall the GPU into a driver reset
+      HitInfo h = trace(o, d, it2 == 0 ? 1000 : 300);
       if (h.kind == 0) { L += tp * uSkyL; break; }
       vec3 p = o + d * h.t;
-      vec3 alb = (h.kind == 3 || h.kind == 4) ? h.alb : uAlbB;
+      vec3 alb = h.kind == 3 ? h.alb : uAlbB;
       if (h.kind == 1) {
-        vec2 uv = vec2((p.x - UVR.x) * UVR.z, 1.0 - (p.y - UVR.y) * UVR.w);
+        vec2 uv = vec2((p.x - INKR.x) * INKR.z, (p.z - INKR.y) * INKR.w);
         if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
-          vec4 ink = texture(uInk, uv);
-          if (ink.a > 0.01 && abs(ink.r * 255.0 - 255.0) < 1.5) alb = mix(alb, uLblC, ink.a);
+          float a = texture(uInk, uv).a;
+          if (a > 0.01) alb = mix(alb, uLblC, a);
         }
       }
+      // frosted-glass transmission: tinted, blurred pass straight through
+      // the slice; the ray resumes from the slice's far surface
+      if (h.kind == 3 && rnd(seed) < uTrans) {
+        tp *= alb;
+        vec3 d2 = coneDir(d, uFrostCos, seed);
+        float ex = traceExit(p + d2 * 0.15, d2, 150);
+        o = p + d2 * (0.15 + ex + 0.3);
+        d = d2;
+        continue;
+      }
       tp *= alb;
-      vec3 sd2 = coneDir(uSunDir, seed);
+      // sun NEE, attenuating through any glass slices along the way
+      vec3 sd2 = coneDir(uSunDir, uSunCos, seed);
       float ndl = dot(h.n, sd2);
       if (ndl > 0.0) {
-        HitInfo sh = trace(p + h.n * 0.5, sd2);
-        if (sh.kind == 0) L += tp * uSunE * ndl / PI;
+        vec3 satt = uSunE * (ndl / PI);
+        vec3 so = p + h.n * 0.5;
+        for (int s = 0; s < 4; s++) {
+          HitInfo sh = trace(so, sd2, 250);
+          if (sh.kind == 0) { L += tp * satt; break; }
+          if (sh.kind != 3) break;
+          satt *= uTrans * sh.alb;
+          if (satt.r + satt.g + satt.b < 0.02) break;
+          vec3 sp2 = so + sd2 * sh.t;
+          float ex2 = traceExit(sp2 + sd2 * 0.15, sd2, 120);
+          so = sp2 + sd2 * (0.15 + ex2 + 0.3);
+        }
       }
-      if (bounce == 1) break;
+      if (++nDiff >= 3) break;
       d = cosineDir(h.n, seed);
       o = p + h.n * 0.5;
     }
@@ -529,8 +533,7 @@
     gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, data);
     return t;
   };
-  const texB = mkTex(nCols, nB, gl.R32F, gl.RED, gl.FLOAT, bndData);
-  const texN = mkTex(nCols, nB, gl.R32F, gl.RED, gl.FLOAT, normData);
+  const texH = mkTex(nCols, nB, gl.R32F, gl.RED, gl.FLOAT, hData);
   const texInk = (() => {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
@@ -549,59 +552,6 @@
     colFlat[k * 3 + 2] = Math.pow(c[2], 2.2);
   }
 
-  // ---- band-label overlay (raster pass over the traced image) ----
-  const lvsrc = `#version 300 es
-  in vec3 aPos;
-  in vec2 aUV;
-  uniform mat4 uMVP;
-  out vec2 vUV;
-  void main() {
-    gl_Position = uMVP * vec4(aPos, 1.0);
-    vUV = aUV;
-  }`;
-  const lfsrc = `#version 300 es
-  precision highp float;
-  in vec2 vUV;
-  uniform sampler2D uInk;
-  out vec4 o;
-  void main() {
-    float a = texture(uInk, vUV).a;
-    if (a < 0.02) discard;
-    o = vec4(vec3(0.10) * a, a);
-  }`;
-  const lprog = mkProg(lvsrc, lfsrc);
-  const lverts = [];
-  const toU = x => (x - UV_X0) / (UV_X1 - UV_X0);
-  const toV = y => 1 - (y - UV_Y0) / (UV_Y1 - UV_Y0);
-  for (const L of labelRects) {
-    const x0 = L.x - L.w / 2, x1 = L.x + L.w / 2;
-    const y0 = L.y - L.h / 2, y1 = L.y + L.h / 2;
-    const c4 = [[x0, y0], [x1, y0], [x1, y1], [x0, y0], [x1, y1], [x0, y1]];
-    for (const [px, py] of c4) lverts.push(px, py, L.z, toU(px), toV(py));
-  }
-  const lbuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, lbuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lverts), gl.STATIC_DRAW);
-  const nLVerts = lverts.length / 5;
-
-  // ---- mat4 helpers (for the overlay pass) ----
-  const m4mul = (a, b) => {
-    const o = new Float32Array(16);
-    for (let c = 0; c < 4; c++) {
-      for (let r = 0; r < 4; r++) {
-        o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
-      }
-    }
-    return o;
-  };
-  const m4persp = (fov, asp, near, far) => {
-    const f = 1 / Math.tan(fov / 2), inv = 1 / (near - far);
-    return new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (near + far) * inv, -1, 0, 0, 2 * near * far * inv, 0]);
-  };
-  const m4rotX = a => new Float32Array([1, 0, 0, 0, 0, Math.cos(a), Math.sin(a), 0, 0, -Math.sin(a), Math.cos(a), 0, 0, 0, 0, 1]);
-  const m4rotY = a => new Float32Array([Math.cos(a), 0, -Math.sin(a), 0, 0, 1, 0, 0, Math.sin(a), 0, Math.cos(a), 0, 0, 0, 0, 1]);
-  const m4trans = (x, y, z) => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
-
   // ---- accumulation targets ----
   let W = 0, H = 0;
   let accTex = [null, null], accFb = [null, null], flip = 0;
@@ -617,24 +567,26 @@
   }
 
   // ---- camera & lighting state ----
-  let yaw = -0.35, pitch = 0.24, dist = 2100;
-  const target = { x: CW / 2, y: CH * 0.4, z: -DEPTH / 2 };
+  let yaw = 0.45, pitch = 0.55, dist = 2900;
+  const target = { x: CW / 2, y: 0, z: -TOTAL * 0.45 };
   const FOV = 35 * Math.PI / 180;
   let frame = 0;
-  const MAX_SPP = 1500;
+  const MAX_SPP = 500;
+  const MAX_TRACE_MS = 45000; // active render-time cap per convergence run, whichever hits first
+  let traceMs = 0;
 
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cBack', 'cLblC']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC']) {
     ctl[id] = document.getElementById(id);
   }
   try {
-    const saved = JSON.parse(localStorage.getItem('sd3d-light') || 'null');
+    const saved = JSON.parse(localStorage.getItem('sd3d-light-v2') || 'null');
     if (saved) for (const id in ctl) if (saved[id] !== undefined) ctl[id].value = saved[id];
   } catch (e) {}
   const saveLight = () => {
     const vals = {};
     for (const id in ctl) vals[id] = ctl[id].value;
-    localStorage.setItem('sd3d-light', JSON.stringify(vals));
+    localStorage.setItem('sd3d-light-v2', JSON.stringify(vals));
   };
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
   const light = {};
@@ -648,12 +600,75 @@
     // sun half-angle: 15 deg at minimum sharpness down to 0.045 deg at maximum
     const halfAngle = 15 * Math.pow(0.003, +ctl.cSharp.value / 100) * Math.PI / 180;
     light.sunCos = Math.cos(halfAngle);
+    light.trans = 1 - +ctl.cOpac.value / 100;
+    // frost: transmission blur cone from 0.5 deg (clear) up to 20 deg (milky)
+    const frostAngle = 0.5 * Math.pow(40, +ctl.cFrost.value / 100) * Math.PI / 180;
+    light.frostCos = Math.cos(frostAngle);
+    light.hScale = +ctl.cScale.value / 100;
   }
   readLight();
-  const reset = () => { frame = 0; };
+  const reset = () => { frame = 0; traceMs = 0; };
   for (const id in ctl) {
-    ctl[id].addEventListener('input', () => { readLight(); saveLight(); reset(); });
+    ctl[id].addEventListener('input', () => {
+      readLight();
+      saveLight();
+      reset();
+      // editing while a saved tuning is selected makes this a new, unsaved
+      // tuning: clear the selection to communicate that
+      if (tunSel.value) refreshTunSel('');
+    });
   }
+
+  // ---- saved tunings ----
+  const tunSel = document.getElementById('tunSel');
+  const tunSave = document.getElementById('tunSave');
+  const tunDel = document.getElementById('tunDel');
+  let tunings = [];
+  try { tunings = JSON.parse(localStorage.getItem('sd3d-tunings') || '[]'); } catch (e) {}
+  const saveTunings = () => localStorage.setItem('sd3d-tunings', JSON.stringify(tunings));
+  function refreshTunSel(sel) {
+    tunSel.replaceChildren();
+    const o0 = document.createElement('option');
+    o0.value = '';
+    o0.textContent = '— unsaved —';
+    tunSel.append(o0);
+    for (const t of tunings) {
+      const o = document.createElement('option');
+      o.value = t.name;
+      o.textContent = t.name;
+      tunSel.append(o);
+    }
+    tunSel.value = sel || '';
+    localStorage.setItem('sd3d-tuning-sel', tunSel.value);
+  }
+  tunSave.addEventListener('click', () => {
+    let n = 0;
+    for (const t of tunings) {
+      const m = /^Tuning (\d+)$/.exec(t.name);
+      if (m) n = Math.max(n, +m[1]);
+    }
+    const vals = {};
+    for (const id in ctl) vals[id] = ctl[id].value;
+    tunings.push({ name: 'Tuning ' + (n + 1), vals });
+    saveTunings();
+    refreshTunSel('Tuning ' + (n + 1));
+  });
+  tunDel.addEventListener('click', () => {
+    if (!tunSel.value) return;
+    tunings = tunings.filter(t => t.name !== tunSel.value);
+    saveTunings();
+    refreshTunSel('');
+  });
+  tunSel.addEventListener('change', () => {
+    localStorage.setItem('sd3d-tuning-sel', tunSel.value);
+    const t = tunings.find(x => x.name === tunSel.value);
+    if (!t) return;
+    for (const id in ctl) if (t.vals[id] !== undefined) ctl[id].value = t.vals[id];
+    readLight();
+    saveLight();
+    reset();
+  });
+  refreshTunSel(localStorage.getItem('sd3d-tuning-sel') || '');
   const panel = document.getElementById('panel');
   const panelArrow = document.getElementById('panelArrow');
   const setPanel = closed => {
@@ -688,10 +703,9 @@
     gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[flip]);
     gl.viewport(0, 0, W, H);
     const U = n => gl.getUniformLocation(progTrace, n);
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texB); gl.uniform1i(U('uB'), 0);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texH); gl.uniform1i(U('uH'), 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texInk); gl.uniform1i(U('uInk'), 1);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, accTex[1 - flip]); gl.uniform1i(U('uPrev'), 2);
-    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, texN); gl.uniform1i(U('uN'), 3);
     gl.uniform3fv(U('uCols'), colFlat);
     gl.uniform2f(U('uSize'), W, H);
     gl.uniform3fv(U('uEye'), cam.eye);
@@ -706,6 +720,9 @@
     gl.uniform3fv(U('uAlbB'), light.albB);
     gl.uniform3fv(U('uLblC'), light.lblC);
     gl.uniform1f(U('uSunCos'), light.sunCos);
+    gl.uniform1f(U('uTrans'), light.trans);
+    gl.uniform1f(U('uFrostCos'), light.frostCos);
+    gl.uniform1f(U('uHScale'), light.hScale);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
@@ -716,48 +733,42 @@
     gl.uniform1i(gl.getUniformLocation(progShow, 'uAcc'), 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    // label overlay
-    if (nLVerts) {
-      let mv = m4trans(-target.x, -target.y, -target.z);
-      mv = m4mul(m4rotY(yaw), mv);
-      mv = m4mul(m4rotX(pitch), mv);
-      mv = m4mul(m4trans(0, 0, -dist), mv);
-      const mvp = m4mul(m4persp(FOV, W / H, 20, 40000), mv);
-      gl.useProgram(lprog);
-      gl.bindBuffer(gl.ARRAY_BUFFER, lbuf);
-      const aPos = gl.getAttribLocation(lprog, 'aPos');
-      const aUV = gl.getAttribLocation(lprog, 'aUV');
-      gl.enableVertexAttribArray(aPos);
-      gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 20, 0);
-      gl.enableVertexAttribArray(aUV);
-      gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 20, 12);
-      gl.uniformMatrix4fv(gl.getUniformLocation(lprog, 'uMVP'), false, mvp);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, texInk);
-      gl.uniform1i(gl.getUniformLocation(lprog, 'uInk'), 0);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      gl.drawArrays(gl.TRIANGLES, 0, nLVerts);
-      gl.disable(gl.BLEND);
-      gl.disableVertexAttribArray(aPos);
-      gl.disableVertexAttribArray(aUV);
-    }
     flip = 1 - flip;
     frame++;
   }
 
-  function loop() {
-    if (frame < MAX_SPP) {
+  let lastTick = 0, cooldown = 0, wasDone = false;
+  function loop(now) {
+    const gap = now - lastTick;
+    lastTick = now;
+    // if the GPU fell behind (previous sample blew past a couple vsyncs),
+    // idle a few frames so the driver can drain instead of piling up work
+    if (frame > 0 && gap > 200) cooldown = 3;
+    if (cooldown > 0) { cooldown--; requestAnimationFrame(loop); return; }
+    const done = frame >= MAX_SPP || traceMs > MAX_TRACE_MS;
+    if (!done) {
+      wasDone = false;
+      if (frame > 0) traceMs += Math.min(gap, 1000); // clamp so hidden-tab gaps don't count
       renderSample();
       if (frame % 10 === 0 || frame < 10) {
         hint.textContent = `path tracing · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
       }
+    } else if (!wasDone) {
+      wasDone = true;
+      hint.textContent = `done · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
     }
     requestAnimationFrame(loop);
   }
 
   // ---- interaction ----
   let mode = null, lastX = 0, lastY = 0;
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault();
+    const last = +(sessionStorage.getItem('sd3d-ctxlost') || 0);
+    sessionStorage.setItem('sd3d-ctxlost', Date.now());
+    if (Date.now() - last > 5000) location.reload();
+    else hint.textContent = 'graphics context lost — refresh to restart';
+  });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     mode = e.button === 2 ? 'rotate' : 'pan';
@@ -798,7 +809,7 @@
   }
   window.addEventListener('resize', resize);
   resize();
-  loop();
+  requestAnimationFrame(loop);
   window.__sd = { sample: renderSample, spp: () => frame, gl };   // debug hook
 })();
 </script>
