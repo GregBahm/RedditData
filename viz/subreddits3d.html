@@ -118,7 +118,10 @@
     if (w < wA || w > wB) continue;
     ig.fillText(String(y), toTX(X(w)), toTY(-90));
   }
-  // band labels for the top 10, at each band's widest visible point
+  // band labels for the top 10, at each band's widest visible point; they
+  // render as a separate always-visible pass (id 200 matches no surface),
+  // so record each label's chart-space rect and layer depth
+  const labelRects = [];
   ig.font = `600 ${Math.round(26 * texScale)}px system-ui, sans-serif`;
   for (let k = 0; k < Math.min(10, nB); k++) {
     let best = { share: 0 };
@@ -129,8 +132,11 @@
       }
     }
     if (best.share > 0.03) {
-      ig.fillStyle = `rgb(${k + 1}, 0, 0)`;
-      ig.fillText('r/' + topSubs[k], toTX(best.x), toTY(best.y));
+      ig.fillStyle = 'rgb(200, 0, 0)';
+      const text = 'r/' + topSubs[k];
+      ig.fillText(text, toTX(best.x), toTY(best.y));
+      const wChart = ig.measureText(text).width / texScale;
+      labelRects.push({ x: best.x, y: best.y, w: wChart + 10, h: 40, z: zOf(k) + 1 });
     }
   }
   const aoCv = document.createElement('canvas');
@@ -265,15 +271,12 @@
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
-  const attr = (name, size, off) => {
-    const loc = gl.getAttribLocation(prog, name);
+  const attr = (pg, name, size, stride, off) => {
+    const loc = gl.getAttribLocation(pg, name);
+    if (loc < 0) return;
     gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 44, off);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, off);
   };
-  attr('aPos', 3, 0);
-  attr('aNorm', 3, 12);
-  attr('aCol', 4, 24);
-  attr('aBand', 1, 40);
   const mkTex = (unit, cvs, uni) => {
     const t = gl.createTexture();
     gl.activeTexture(gl.TEXTURE0 + unit);
@@ -289,6 +292,49 @@
   mkTex(1, aoCv, 'uAO');
   gl.uniform4f(gl.getUniformLocation(prog, 'uUVRect'), UV_X0, UV_Y0, 1 / (UV_X1 - UV_X0), 1 / (UV_Y1 - UV_Y0));
   gl.enable(gl.DEPTH_TEST);
+
+  // ---- band-label overlay pass: quads on their layer's plane, drawn
+  // without depth testing so labels never sink behind nearer layers ----
+  const lvsrc = `#version 300 es
+  in vec3 aPos;
+  in vec2 aUV;
+  uniform mat4 uMVP;
+  out vec2 vUV;
+  void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    vUV = aUV;
+  }`;
+  const lfsrc = `#version 300 es
+  precision highp float;
+  in vec2 vUV;
+  uniform sampler2D uInk;
+  out vec4 o;
+  void main() {
+    float a = texture(uInk, vUV).a;
+    if (a < 0.02) discard;
+    o = vec4(vec3(0.10) * a, a);
+  }`;
+  const lprog = gl.createProgram();
+  gl.attachShader(lprog, mk(gl.VERTEX_SHADER, lvsrc));
+  gl.attachShader(lprog, mk(gl.FRAGMENT_SHADER, lfsrc));
+  gl.linkProgram(lprog);
+  if (!gl.getProgramParameter(lprog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(lprog));
+  const lverts = [];
+  const toU = x => (x - UV_X0) / (UV_X1 - UV_X0);
+  const toV = y => 1 - (y - UV_Y0) / (UV_Y1 - UV_Y0);
+  for (const L of labelRects) {
+    const x0 = L.x - L.w / 2, x1 = L.x + L.w / 2;
+    const y0 = L.y - L.h / 2, y1 = L.y + L.h / 2;
+    const c4 = [
+      [x0, y0], [x1, y0], [x1, y1],
+      [x0, y0], [x1, y1], [x0, y1],
+    ];
+    for (const [px, py] of c4) lverts.push(px, py, L.z, toU(px), toV(py));
+  }
+  const lbuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, lbuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lverts), gl.STATIC_DRAW);
+  const nLVerts = lverts.length / 5;
 
   // ---- minimal mat4 ----
   const m4mul = (a, b) => {
@@ -323,8 +369,29 @@
     mv = m4mul(m4rotX(pitch), mv);
     mv = m4mul(m4trans(0, 0, -dist), mv);
     const mvp = m4mul(m4persp(FOV, W / H, 20, 40000), mv);
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    attr(prog, 'aPos', 3, 44, 0);
+    attr(prog, 'aNorm', 3, 44, 12);
+    attr(prog, 'aCol', 4, 44, 24);
+    attr(prog, 'aBand', 1, 44, 40);
     gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'uMVP'), false, mvp);
     gl.drawArrays(gl.TRIANGLES, 0, nVerts);
+    // label overlay: always visible, alpha-blended
+    if (nLVerts) {
+      gl.useProgram(lprog);
+      gl.bindBuffer(gl.ARRAY_BUFFER, lbuf);
+      attr(lprog, 'aPos', 3, 20, 0);
+      attr(lprog, 'aUV', 2, 20, 12);
+      gl.uniformMatrix4fv(gl.getUniformLocation(lprog, 'uMVP'), false, mvp);
+      gl.uniform1i(gl.getUniformLocation(lprog, 'uInk'), 0);
+      gl.disable(gl.DEPTH_TEST);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.drawArrays(gl.TRIANGLES, 0, nLVerts);
+      gl.disable(gl.BLEND);
+      gl.enable(gl.DEPTH_TEST);
+    }
   }
 
   // ---- interaction ----
