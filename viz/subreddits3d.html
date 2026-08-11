@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subreddits in 3D</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: #f2f1ee; font-family: system-ui, sans-serif; }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #hint {
+    position: fixed; top: 10px; right: 14px;
+    font-size: 12px; color: #898781; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<script src="data.js"></script>
+<script>
+(() => {
+  // ---- data: weekly subreddit composition, top 50, smoothed & normalized ----
+  const items = REDDIT_DATA.map(d => ({
+    sub: d.sub,
+    time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
+  })).filter(d => Number.isFinite(d.time));
+  items.sort((a, b) => a.time - b.time);
+  const t0 = items[0].time, t1 = items[items.length - 1].time;
+  const MS_WEEK = 6048e5;
+  const w0 = (() => {
+    const d = new Date(t0);
+    const day = (d.getUTCDay() + 6) % 7;
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
+  })();
+  const nW = Math.floor((t1 - w0) / MS_WEEK) + 1;
+  const subTotals = new Map();
+  for (const d of items) subTotals.set(d.sub, (subTotals.get(d.sub) || 0) + 1);
+  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 50).map(e => e[0]);
+  const subIndex = new Map(topSubs.map((s, i) => [s, i]));
+  const nB = topSubs.length;
+  const subWeekly = Array.from({ length: nB }, () => new Array(nW).fill(0));
+  for (const d of items) {
+    const k = subIndex.get(d.sub);
+    if (k === undefined) continue;
+    subWeekly[k][Math.floor((d.time - w0) / MS_WEEK)]++;
+  }
+  const SIGMA = 7.58;   // ~30 week window, matching the 2D default
+  function smoothSeries(vals, sigma) {
+    const radius = Math.ceil(sigma * 3);
+    const kernel = Array.from({ length: radius + 1 }, (_, k) => Math.exp(-(k * k) / (2 * sigma * sigma)));
+    return vals.map((_, i) => {
+      let sum = 0, wsum = 0;
+      for (let j = Math.max(0, i - radius); j <= Math.min(vals.length - 1, i + radius); j++) {
+        const w = kernel[Math.abs(j - i)];
+        sum += vals[j] * w;
+        wsum += w;
+      }
+      return wsum > 0 ? sum / wsum : 0;
+    });
+  }
+  const sm = subWeekly.map(a => smoothSeries(a, SIGMA).map(v => Math.max(0, v)));
+  const totals = new Array(nW).fill(0);
+  for (let k = 0; k < nB; k++) for (let w = 0; w < nW; w++) totals[w] += sm[k][w];
+  // valid week range, and cumulative shares (forward-filled through gaps)
+  let wA = 0; while (wA < nW && totals[wA] < 1e-4) wA++;
+  let wB = nW - 1; while (wB > wA && totals[wB] < 1e-4) wB--;
+  const cum = Array.from({ length: nB + 1 }, () => new Array(nW).fill(0));
+  let lastCol = null;
+  for (let w = wA; w <= wB; w++) {
+    if (totals[w] >= 1e-4) {
+      let c = 0;
+      lastCol = [0];
+      for (let k = 0; k < nB; k++) { c += sm[k][w] / totals[w]; lastCol.push(c); }
+    }
+    for (let k = 0; k <= nB; k++) cum[k][w] = lastCol ? lastCol[k] : 0;
+  }
+
+  // golden-angle palette, matching the 2D view
+  function hslToRgb(h, s, l) {
+    const a = s * Math.min(l, 1 - l);
+    const f = n => {
+      const k = (n + h / 30) % 12;
+      return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    };
+    return [f(0), f(8), f(4)];
+  }
+  const bandColor = k => hslToRgb((k * 137.508) % 360, (55 + (k % 2) * 12) / 100, (50 + (k % 3) * 6) / 100);
+
+  // ---- scene dimensions ----
+  const CW = 2000, CH = 1000, DEPTH = 300;
+  const LBL = 260;                       // backdrop label margin below the chart
+  const zOf = k => -DEPTH + k / (nB - 1) * DEPTH;   // sheet 0 on the backdrop, top sheet at 0
+  const X = w => (w - wA) / (wB - wA) * CW;
+
+  // ---- ink texture (labels) and AO texture (layer contact shadows) ----
+  const UV_X0 = -120, UV_X1 = CW + 120, UV_Y0 = -LBL - 40, UV_Y1 = CH + 60;
+  const TEXW = 2048;
+  const TEXH = Math.round(TEXW * (UV_Y1 - UV_Y0) / (UV_X1 - UV_X0));
+  const texScale = TEXW / (UV_X1 - UV_X0);
+  const toTX = x => (x - UV_X0) * texScale;
+  const toTY = y => (UV_Y1 - y) * texScale;
+  // ink alpha is glyph coverage; ink red encodes which surface owns the
+  // label (sheet k -> k+1, backdrop -> 255) so deeper sheets that share the
+  // same chart position do not also print it
+  const inkCv = document.createElement('canvas');
+  inkCv.width = TEXW; inkCv.height = TEXH;
+  const ig = inkCv.getContext('2d');
+  ig.textBaseline = 'middle';
+  // year labels on the backdrop, below the chart
+  ig.fillStyle = 'rgb(255, 0, 0)';
+  ig.font = `600 ${Math.round(30 * texScale)}px system-ui, sans-serif`;
+  ig.textAlign = 'center';
+  const y0year = new Date(w0 + wA * MS_WEEK).getUTCFullYear() + 1;
+  const y1year = new Date(w0 + wB * MS_WEEK).getUTCFullYear();
+  for (let y = y0year; y <= y1year; y++) {
+    const t = Date.UTC(y, 0, 1);
+    const w = (t - w0) / MS_WEEK;
+    if (w < wA || w > wB) continue;
+    ig.fillText(String(y), toTX(X(w)), toTY(-90));
+  }
+  // band labels for the top 10, at each band's widest visible point
+  ig.font = `600 ${Math.round(26 * texScale)}px system-ui, sans-serif`;
+  for (let k = 0; k < Math.min(10, nB); k++) {
+    let best = { share: 0 };
+    for (let w = wA; w <= wB; w++) {
+      const share = cum[k + 1][w] - cum[k][w];
+      if (share > best.share && X(w) > 120 && X(w) < CW - 120) {
+        best = { share, x: X(w), y: (cum[k][w] + cum[k + 1][w]) / 2 * CH };
+      }
+    }
+    if (best.share > 0.04) {
+      ig.fillStyle = `rgb(${k + 1}, 0, 0)`;
+      ig.fillText('r/' + topSubs[k], toTX(best.x), toTY(best.y));
+    }
+  }
+  const aoCv = document.createElement('canvas');
+  aoCv.width = TEXW; aoCv.height = TEXH;
+  const ag = aoCv.getContext('2d');
+  ag.lineJoin = ag.lineCap = 'round';
+  ag.filter = 'blur(4px)';
+  ag.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+  ag.lineWidth = 7;
+  for (let k = 1; k < nB; k++) {
+    ag.beginPath();
+    for (let w = wA; w <= wB; w++) {
+      const tx = toTX(X(w)), ty = toTY(cum[k][w] * CH) + 5;   // shadow falls below the edge
+      if (w === wA) ag.moveTo(tx, ty); else ag.lineTo(tx, ty);
+    }
+    ag.stroke();
+  }
+
+  // ---- geometry: interleaved [pos3, normal3, color4, bandId] ----
+  const verts = [];
+  const push = (p, n, c, b) => verts.push(p[0], p[1], p[2], n[0], n[1], n[2], c[0], c[1], c[2], c[3], b);
+  const quad = (p1, p2, p3, p4, n, c, b) => {
+    push(p1, n, c, b); push(p2, n, c, b); push(p3, n, c, b);
+    push(p1, n, c, b); push(p3, n, c, b); push(p4, n, c, b);
+  };
+  const WHITE = [0.94, 0.94, 0.93];
+  // sheets: sheet k covers from its bottom boundary up to the chart top, at z(k)
+  for (let k = 0; k < nB; k++) {
+    const zk = zOf(k);
+    const col = [...bandColor(k), 1];
+    for (let w = wA; w < wB; w++) {
+      const yA = cum[k][w] * CH, yB2 = cum[k][w + 1] * CH;
+      quad([X(w), yA, zk], [X(w + 1), yB2, zk], [X(w + 1), CH, zk], [X(w), CH, zk], [0, 0, 1], col, k + 1);
+    }
+    // riser: the sheet's cut edge, connecting back to the sheet behind it
+    if (k > 0) {
+      const zp = zOf(k - 1);
+      const rc = [col[0] * 0.82, col[1] * 0.82, col[2] * 0.82, 0];
+      for (let w = wA; w < wB; w++) {
+        const yA = cum[k][w] * CH, yB2 = cum[k][w + 1] * CH;
+        const dx = X(w + 1) - X(w), dy = yB2 - yA;
+        const il = 1 / Math.hypot(dy, dx);
+        quad([X(w), yA, zp], [X(w), yA, zk], [X(w + 1), yB2, zk], [X(w + 1), yB2, zp],
+          [dy * il, -dx * il, 0], rc, 0);
+      }
+    }
+  }
+  // backdrop label area below the chart (deepest plane, carries the years)
+  quad([0, -LBL, -DEPTH], [CW, -LBL, -DEPTH], [CW, 0, -DEPTH], [0, 0, -DEPTH], [0, 0, 1], [...WHITE, 1], 255);
+  // recess ceiling and side walls
+  quad([0, CH, 0], [CW, CH, 0], [CW, CH, -DEPTH], [0, CH, -DEPTH], [0, -1, 0], [...WHITE, 0], 0);
+  quad([0, -LBL, -DEPTH], [0, CH, -DEPTH], [0, CH, 0], [0, -LBL, 0], [1, 0, 0], [...WHITE, 0], 0);
+  quad([CW, -LBL, 0], [CW, CH, 0], [CW, CH, -DEPTH], [CW, -LBL, -DEPTH], [-1, 0, 0], [...WHITE, 0], 0);
+  // front mat around the opening (top strip and both sides)
+  const BIG = 6000;
+  quad([-BIG, CH, 0], [CW + BIG, CH, 0], [CW + BIG, CH + BIG, 0], [-BIG, CH + BIG, 0], [0, 0, 1], [...WHITE, 0], 0);
+  quad([-BIG, -LBL, 0], [0, -LBL, 0], [0, CH, 0], [-BIG, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
+  quad([CW, -LBL, 0], [CW + BIG, -LBL, 0], [CW + BIG, CH, 0], [CW, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
+  quad([-BIG, -LBL - BIG, 0], [CW + BIG, -LBL - BIG, 0], [CW + BIG, -LBL, 0], [-BIG, -LBL, 0], [0, 0, 1], [...WHITE, 0], 0);
+  const vertData = new Float32Array(verts);
+  const nVerts = vertData.length / 11;
+
+  // ---- gl ----
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl2', { antialias: true });
+  if (!gl) {
+    document.getElementById('hint').textContent = 'WebGL2 unavailable';
+    return;
+  }
+  const vsrc = `#version 300 es
+  in vec3 aPos;
+  in vec3 aNorm;
+  in vec4 aCol;
+  in float aBand;
+  uniform mat4 uMVP;
+  out vec3 vNorm;
+  out vec4 vCol;
+  out vec2 vXY;
+  out float vBand;
+  void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    vNorm = aNorm;
+    vCol = aCol;
+    vXY = aPos.xy;
+    vBand = aBand;
+  }`;
+  const fsrc = `#version 300 es
+  precision highp float;
+  in vec3 vNorm;
+  in vec4 vCol;
+  in vec2 vXY;
+  in float vBand;
+  uniform sampler2D uInk;
+  uniform sampler2D uAO;
+  uniform vec4 uUVRect;   // x0, y0, 1/w, 1/h in chart space
+  out vec4 o;
+  void main() {
+    vec3 base = vCol.rgb;
+    float aoMul = 1.0;
+    if (vCol.a > 0.5) {
+      vec2 uv = vec2((vXY.x - uUVRect.x) * uUVRect.z, 1.0 - (vXY.y - uUVRect.y) * uUVRect.w);
+      if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
+        vec4 ink = texture(uInk, uv);
+        if (ink.a > 0.01) {
+          float id = ink.r / max(ink.a, 0.004) * 255.0;   // un-premultiply the owner id
+          if (abs(id - vBand) < 1.5) base = mix(base, vec3(0.12), ink.a);
+        }
+        aoMul = 1.0 - 0.55 * texture(uAO, uv).a;
+      }
+    }
+    vec3 n = normalize(vNorm);
+    vec3 l = normalize(vec3(-0.35, 0.55, 0.75));
+    float diff = max(dot(n, l), 0.0);
+    float hemi = 0.5 + 0.5 * n.y;
+    vec3 col = base * (0.40 + 0.50 * diff + 0.18 * hemi) * aoMul;
+    o = vec4(col, 1.0);
+  }`;
+  const mk = (t, s) => {
+    const sh = gl.createShader(t);
+    gl.shaderSource(sh, s);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, vsrc));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
+  const attr = (name, size, off) => {
+    const loc = gl.getAttribLocation(prog, name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 44, off);
+  };
+  attr('aPos', 3, 0);
+  attr('aNorm', 3, 12);
+  attr('aCol', 4, 24);
+  attr('aBand', 1, 40);
+  const mkTex = (unit, cvs, uni) => {
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, cvs);
+    gl.uniform1i(gl.getUniformLocation(prog, uni), unit);
+  };
+  mkTex(0, inkCv, 'uInk');
+  mkTex(1, aoCv, 'uAO');
+  gl.uniform4f(gl.getUniformLocation(prog, 'uUVRect'), UV_X0, UV_Y0, 1 / (UV_X1 - UV_X0), 1 / (UV_Y1 - UV_Y0));
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.BACK);
+
+  // ---- minimal mat4 ----
+  const m4mul = (a, b) => {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) {
+      for (let r = 0; r < 4; r++) {
+        o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+      }
+    }
+    return o;
+  };
+  const m4persp = (fov, asp, near, far) => {
+    const f = 1 / Math.tan(fov / 2), inv = 1 / (near - far);
+    return new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (near + far) * inv, -1, 0, 0, 2 * near * far * inv, 0]);
+  };
+  const m4rotX = a => new Float32Array([1, 0, 0, 0, 0, Math.cos(a), Math.sin(a), 0, 0, -Math.sin(a), Math.cos(a), 0, 0, 0, 0, 1]);
+  const m4rotY = a => new Float32Array([Math.cos(a), 0, -Math.sin(a), 0, 0, 1, 0, 0, Math.sin(a), 0, Math.cos(a), 0, 0, 0, 0, 1]);
+  const m4trans = (x, y, z) => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
+
+  // ---- camera ----
+  let yaw = -0.35, pitch = 0.24, dist = 2100;
+  const target = { x: CW / 2, y: CH * 0.4, z: -DEPTH / 2 };
+  let W = 0, H = 0;
+  const FOV = 35 * Math.PI / 180;
+
+  function draw() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.949, 0.945, 0.933, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    let mv = m4trans(-target.x, -target.y, -target.z);
+    mv = m4mul(m4rotY(yaw), mv);
+    mv = m4mul(m4rotX(pitch), mv);
+    mv = m4mul(m4trans(0, 0, -dist), mv);
+    const mvp = m4mul(m4persp(FOV, W / H, 20, 40000), mv);
+    gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'uMVP'), false, mvp);
+    gl.drawArrays(gl.TRIANGLES, 0, nVerts);
+  }
+
+  // ---- interaction ----
+  let mode = null, lastX = 0, lastY = 0;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('pointerdown', e => {
+    mode = e.button === 2 ? 'rotate' : 'pan';
+    lastX = e.clientX; lastY = e.clientY;
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!mode) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    if (mode === 'rotate') {
+      yaw += dx * 0.005;
+      pitch = Math.max(-1.3, Math.min(1.3, pitch + dy * 0.005));
+    } else {
+      // pan in the camera plane
+      const wpp = 2 * dist * Math.tan(FOV / 2) / H;
+      const cy = Math.cos(yaw), sy = Math.sin(yaw);
+      const cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const rx = [cy, 0, sy];                       // camera right in world
+      const up = [sy * sp, cp, -cy * sp];           // camera up in world
+      target.x -= (rx[0] * dx - up[0] * dy) * wpp;
+      target.y -= (rx[1] * dx - up[1] * dy) * wpp;
+      target.z -= (rx[2] * dx - up[2] * dy) * wpp;
+    }
+    requestAnimationFrame(draw);
+  });
+  canvas.addEventListener('pointerup', () => { mode = null; });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    dist *= Math.pow(1.0015, e.deltaY);
+    dist = Math.max(150, Math.min(15000, dist));
+    requestAnimationFrame(draw);
+  }, { passive: false });
+
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    draw();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+</body>
+</html>

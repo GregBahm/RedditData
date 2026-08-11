@@ -79,13 +79,13 @@
   }
   .tab:hover { color: var(--text-primary); }
   a.tab { text-decoration: none; display: inline-flex; align-items: center; }
-  #tab3d {
+  #tab3d, #tab3dSub {
     background: var(--accent);
     color: #fff;
     border-color: transparent;
     align-self: center;
   }
-  #tab3d:hover { color: #fff; opacity: 0.88; }
+  #tab3d:hover, #tab3dSub:hover { color: #fff; opacity: 0.88; }
   .mode-top #tab3d { display: none; }
   .tab.active {
     background: var(--surface-1);
@@ -247,6 +247,7 @@
     </div>
     <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
     <a class="tab" id="tab3d" href="experiment.html">In fabulous 3D</a>
+    <a class="tab" id="tab3dSub" href="subreddits3d.html" style="display:none">In fabulous 3D</a>
     <div id="smoothRow">
       <input type="range" id="smoothSlider" min="0" max="100" value="54" title="Smoothing">
       <span id="smoothVal">~30 wk</span>
@@ -1295,6 +1296,7 @@
     scaleToggle.style.display = m === 'sdist' || m === 'trends' ? 'none' : '';
     document.getElementById('tip').style.display = 'none';
     document.getElementById('sdistRadios').style.display = m === 'sdist' ? '' : 'none';
+    document.getElementById('tab3dSub').style.display = m === 'sdist' ? '' : 'none';
     updateSmoothRow();
     toggleLabel();
     computeBase();
