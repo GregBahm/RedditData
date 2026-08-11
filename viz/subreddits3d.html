@@ -328,7 +328,9 @@
         t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
       } else if (o.y < 0.0 || o.y > CH) t1 = -1.0;
       {
-        float ta = -o.z / d.z, tb = (BWZ - o.z) / d.z;
+        // domain starts 1 unit in front of z=0 so band 0's sheet (exactly at
+        // z=0) is always crossed as an interior event, never clipped onto
+        float ta = (1.0 - o.z) / d.z, tb = (BWZ - o.z) / d.z;
         t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb));
       }
       if (t1 > t0) {
