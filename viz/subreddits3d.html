@@ -63,19 +63,11 @@
   const sm = subWeekly.map(a => smoothSeries(a, SIGMA).map(v => Math.max(0, v)));
   const totals = new Array(nW).fill(0);
   for (let k = 0; k < nB; k++) for (let w = 0; w < nW; w++) totals[w] += sm[k][w];
-  // valid week range, and cumulative shares (forward-filled through gaps)
-  let wA = 0; while (wA < nW && totals[wA] < 1e-4) wA++;
-  let wB = nW - 1; while (wB > wA && totals[wB] < 1e-4) wB--;
-  const cum = Array.from({ length: nB + 1 }, () => new Array(nW).fill(0));
-  let lastCol = null;
-  for (let w = wA; w <= wB; w++) {
-    if (totals[w] >= 1e-4) {
-      let c = 0;
-      lastCol = [0];
-      for (let k = 0; k < nB; k++) { c += sm[k][w] / totals[w]; lastCol.push(c); }
-    }
-    for (let k = 0; k <= nB; k++) cum[k][w] = lastCol ? lastCol[k] : 0;
-  }
+  let wA = 0; while (wA < nW && totals[wA] < 1e-3) wA++;
+  let wB = nW - 1; while (wB > wA && totals[wB] < 1e-3) wB--;
+  // absolute stacked heights in chart units: the peak week fills the height
+  let peak = 1;
+  for (let w = wA; w <= wB; w++) if (totals[w] > peak) peak = totals[w];
 
   // golden-angle palette, matching the 2D view
   function hslToRgb(h, s, l) {
@@ -90,9 +82,15 @@
 
   // ---- scene dimensions ----
   const CW = 2000, CH = 1000, DEPTH = 300;
-  const LBL = 260;                       // backdrop label margin below the chart
-  const zOf = k => -DEPTH + k / (nB - 1) * DEPTH;   // sheet 0 on the backdrop, top sheet at 0
+  const LBL = 260;                       // front-plane label margin below the chart
+  const zOf = k => -(k / (nB - 1)) * DEPTH;   // sheet 0 flush with the front, top sheet recessed
   const X = w => (w - wA) / (wB - wA) * CW;
+  const yScale = CH / peak;
+  const cumY = Array.from({ length: nB + 1 }, () => new Array(nW).fill(0));
+  for (let w = wA; w <= wB; w++) {
+    let c = 0;
+    for (let k = 0; k < nB; k++) { c += sm[k][w]; cumY[k + 1][w] = c * yScale; }
+  }
 
   // ---- ink texture (labels) and AO texture (layer contact shadows) ----
   const UV_X0 = -120, UV_X1 = CW + 120, UV_Y0 = -LBL - 40, UV_Y1 = CH + 60;
@@ -125,12 +123,12 @@
   for (let k = 0; k < Math.min(10, nB); k++) {
     let best = { share: 0 };
     for (let w = wA; w <= wB; w++) {
-      const share = cum[k + 1][w] - cum[k][w];
+      const share = (cumY[k + 1][w] - cumY[k][w]) / CH;
       if (share > best.share && X(w) > 120 && X(w) < CW - 120) {
-        best = { share, x: X(w), y: (cum[k][w] + cum[k + 1][w]) / 2 * CH };
+        best = { share, x: X(w), y: (cumY[k][w] + cumY[k + 1][w]) / 2 };
       }
     }
-    if (best.share > 0.04) {
+    if (best.share > 0.03) {
       ig.fillStyle = `rgb(${k + 1}, 0, 0)`;
       ig.fillText('r/' + topSubs[k], toTX(best.x), toTY(best.y));
     }
@@ -145,7 +143,7 @@
   for (let k = 1; k < nB; k++) {
     ag.beginPath();
     for (let w = wA; w <= wB; w++) {
-      const tx = toTX(X(w)), ty = toTY(cum[k][w] * CH) + 5;   // shadow falls below the edge
+      const tx = toTX(X(w)), ty = toTY(cumY[k][w]) - 5;   // shadow falls above the edge, onto the sheet behind
       if (w === wA) ag.moveTo(tx, ty); else ag.lineTo(tx, ty);
     }
     ag.stroke();
@@ -159,39 +157,40 @@
     push(p1, n, c, b); push(p3, n, c, b); push(p4, n, c, b);
   };
   const WHITE = [0.94, 0.94, 0.93];
-  // sheets: sheet k covers from its bottom boundary up to the chart top, at z(k)
+  // sheets: sheet k covers from the base up to its top boundary, at z(k);
+  // sheet 0 (bottom band) sits at the front, higher bands recess backward
   for (let k = 0; k < nB; k++) {
     const zk = zOf(k);
     const col = [...bandColor(k), 1];
     for (let w = wA; w < wB; w++) {
-      const yA = cum[k][w] * CH, yB2 = cum[k][w + 1] * CH;
-      quad([X(w), yA, zk], [X(w + 1), yB2, zk], [X(w + 1), CH, zk], [X(w), CH, zk], [0, 0, 1], col, k + 1);
+      const yA = cumY[k + 1][w], yB2 = cumY[k + 1][w + 1];
+      quad([X(w), 0, zk], [X(w + 1), 0, zk], [X(w + 1), yB2, zk], [X(w), yA, zk], [0, 0, 1], col, k + 1);
     }
-    // riser: the sheet's cut edge, connecting back to the sheet behind it
-    if (k > 0) {
-      const zp = zOf(k - 1);
+    // riser: this sheet's top cut edge, connecting back to the sheet behind
+    if (k < nB - 1) {
+      const zb = zOf(k + 1);
       const rc = [col[0] * 0.82, col[1] * 0.82, col[2] * 0.82, 0];
       for (let w = wA; w < wB; w++) {
-        const yA = cum[k][w] * CH, yB2 = cum[k][w + 1] * CH;
+        const yA = cumY[k + 1][w], yB2 = cumY[k + 1][w + 1];
         const dx = X(w + 1) - X(w), dy = yB2 - yA;
         const il = 1 / Math.hypot(dy, dx);
-        quad([X(w), yA, zp], [X(w), yA, zk], [X(w + 1), yB2, zk], [X(w + 1), yB2, zp],
-          [dy * il, -dx * il, 0], rc, 0);
+        quad([X(w), yA, zk], [X(w + 1), yB2, zk], [X(w + 1), yB2, zb], [X(w), yA, zb],
+          [-dy * il, dx * il, 0], rc, 0);
       }
     }
   }
-  // backdrop label area below the chart (deepest plane, carries the years)
-  quad([0, -LBL, -DEPTH], [CW, -LBL, -DEPTH], [CW, 0, -DEPTH], [0, 0, -DEPTH], [0, 0, 1], [...WHITE, 1], 255);
+  // white back wall of the recess (behind the deepest sheet)
+  quad([0, 0, -DEPTH - 2], [CW, 0, -DEPTH - 2], [CW, CH, -DEPTH - 2], [0, CH, -DEPTH - 2], [0, 0, 1], [...WHITE, 0], 0);
   // recess ceiling and side walls
-  quad([0, CH, 0], [CW, CH, 0], [CW, CH, -DEPTH], [0, CH, -DEPTH], [0, -1, 0], [...WHITE, 0], 0);
-  quad([0, -LBL, -DEPTH], [0, CH, -DEPTH], [0, CH, 0], [0, -LBL, 0], [1, 0, 0], [...WHITE, 0], 0);
-  quad([CW, -LBL, 0], [CW, CH, 0], [CW, CH, -DEPTH], [CW, -LBL, -DEPTH], [-1, 0, 0], [...WHITE, 0], 0);
-  // front mat around the opening (top strip and both sides)
+  quad([0, CH, 0], [CW, CH, 0], [CW, CH, -DEPTH - 2], [0, CH, -DEPTH - 2], [0, -1, 0], [...WHITE, 0], 0);
+  quad([0, 0, -DEPTH - 2], [0, CH, -DEPTH - 2], [0, CH, 0], [0, 0, 0], [1, 0, 0], [...WHITE, 0], 0);
+  quad([CW, 0, 0], [CW, CH, 0], [CW, CH, -DEPTH - 2], [CW, 0, -DEPTH - 2], [-1, 0, 0], [...WHITE, 0], 0);
+  // front mat around the opening; the strip below the chart carries the years
   const BIG = 6000;
   quad([-BIG, CH, 0], [CW + BIG, CH, 0], [CW + BIG, CH + BIG, 0], [-BIG, CH + BIG, 0], [0, 0, 1], [...WHITE, 0], 0);
-  quad([-BIG, -LBL, 0], [0, -LBL, 0], [0, CH, 0], [-BIG, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
-  quad([CW, -LBL, 0], [CW + BIG, -LBL, 0], [CW + BIG, CH, 0], [CW, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
-  quad([-BIG, -LBL - BIG, 0], [CW + BIG, -LBL - BIG, 0], [CW + BIG, -LBL, 0], [-BIG, -LBL, 0], [0, 0, 1], [...WHITE, 0], 0);
+  quad([-BIG, -BIG, 0], [0, -BIG, 0], [0, CH, 0], [-BIG, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
+  quad([CW, -BIG, 0], [CW + BIG, -BIG, 0], [CW + BIG, CH, 0], [CW, CH, 0], [0, 0, 1], [...WHITE, 0], 0);
+  quad([0, -BIG, 0], [CW, -BIG, 0], [CW, 0, 0], [0, 0, 0], [0, 0, 1], [...WHITE, 1], 255);
   const vertData = new Float32Array(verts);
   const nVerts = vertData.length / 11;
 
@@ -290,8 +289,6 @@
   mkTex(1, aoCv, 'uAO');
   gl.uniform4f(gl.getUniformLocation(prog, 'uUVRect'), UV_X0, UV_Y0, 1 / (UV_X1 - UV_X0), 1 / (UV_Y1 - UV_Y0));
   gl.enable(gl.DEPTH_TEST);
-  gl.enable(gl.CULL_FACE);
-  gl.cullFace(gl.BACK);
 
   // ---- minimal mat4 ----
   const m4mul = (a, b) => {
