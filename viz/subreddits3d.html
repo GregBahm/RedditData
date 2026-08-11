@@ -242,7 +242,8 @@
       if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
         vec4 ink = texture(uInk, uv);
         if (ink.a > 0.01) {
-          float id = ink.r / max(ink.a, 0.004) * 255.0;   // un-premultiply the owner id
+          // the canvas upload is already un-premultiplied, so red IS the id
+          float id = ink.r * 255.0;
           if (abs(id - vBand) < 1.5) base = mix(base, vec3(0.12), ink.a);
         }
         aoMul = 1.0 - 0.55 * texture(uAO, uv).a;
