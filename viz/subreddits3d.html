@@ -44,9 +44,11 @@
   <div id="panelBody">
     <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="25"></div>
     <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="50"></div>
+    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="32"></div>
     <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff1e0"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="2.6"></div>
     <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#cdd8e4"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="0.9"></div>
     <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#eeeeee"></div>
+    <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#616161"></div>
   </div>
 </div>
 <script src="data.js"></script>
@@ -212,13 +214,14 @@
   uniform vec3 uSunE;
   uniform vec3 uSkyL;
   uniform vec3 uAlbB;
+  uniform vec3 uLblC;
+  uniform float uSunCos;
   out vec4 outc;
 
   const float CW = ${CW.toFixed(1)};
   const float CH = ${CH.toFixed(1)};
   const float BWZ = ${BW.toFixed(1)};
   const int NB = ${nB};
-  const float SUN_COSMAX = 0.9992;
   const float PI = 3.14159265;
   const vec4 UVR = vec4(${UV_X0.toFixed(1)}, ${UV_Y0.toFixed(1)}, ${(1 / (UV_X1 - UV_X0)).toExponential(6)}, ${(1 / (UV_Y1 - UV_Y0)).toExponential(6)});
 
@@ -349,7 +352,7 @@
   }
   vec3 coneDir(vec3 dir, inout uint s) {
     float r1 = rnd(s), r2 = rnd(s);
-    float ct = mix(SUN_COSMAX, 1.0, r1);
+    float ct = mix(uSunCos, 1.0, r1);
     float st = sqrt(max(0.0, 1.0 - ct * ct)), ph = 6.2831853 * r2;
     vec3 t = onbT(dir), b = cross(dir, t);
     return normalize(t * (st * cos(ph)) + b * (st * sin(ph)) + dir * ct);
@@ -373,7 +376,7 @@
         vec2 uv = vec2((p.x - UVR.x) * UVR.z, 1.0 - (p.y - UVR.y) * UVR.w);
         if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
           vec4 ink = texture(uInk, uv);
-          if (ink.a > 0.01 && abs(ink.r * 255.0 - 255.0) < 1.5) alb = mix(alb, vec3(0.12), ink.a);
+          if (ink.a > 0.01 && abs(ink.r * 255.0 - 255.0) < 1.5) alb = mix(alb, uLblC, ink.a);
         }
       }
       tp *= alb;
@@ -523,7 +526,7 @@
   const MAX_SPP = 1500;
 
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cBack']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cBack', 'cLblC']) {
     ctl[id] = document.getElementById(id);
   }
   try {
@@ -543,6 +546,10 @@
     light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
     light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
     light.albB = hex2lin(ctl.cBack.value);
+    light.lblC = hex2lin(ctl.cLblC.value);
+    // sun half-angle: 15 deg at minimum sharpness down to 0.045 deg at maximum
+    const halfAngle = 15 * Math.pow(0.003, +ctl.cSharp.value / 100) * Math.PI / 180;
+    light.sunCos = Math.cos(halfAngle);
   }
   readLight();
   const reset = () => { frame = 0; };
@@ -598,6 +605,8 @@
     gl.uniform3fv(U('uSunE'), light.sunE);
     gl.uniform3fv(U('uSkyL'), light.skyL);
     gl.uniform3fv(U('uAlbB'), light.albB);
+    gl.uniform3fv(U('uLblC'), light.lblC);
+    gl.uniform1f(U('uSunCos'), light.sunCos);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
