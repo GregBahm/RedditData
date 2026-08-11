@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -93,7 +93,6 @@
     color: var(--text-primary);
     font-weight: 600;
   }
-  .mode-top #legendOv { display: none; }
   .mode-top #scatterRadios { display: none; }
   .controls {
     margin-left: auto;
@@ -110,7 +109,6 @@
   .legend label input { margin: 0; }
   .radios { font-size: 13px; align-self: center; }
   .radios label { color: var(--text-primary); }
-  #legendOv { font-size: 13px; align-self: center; }
   #smoothRow {
     display: none;
     align-items: center;
@@ -248,13 +246,6 @@
       <label><input type="checkbox" id="sdNorm" checked>normalized</label>
     </div>
     <button class="toggle" id="scaleToggle" title="Switch axis scale">score: log</button>
-    <div class="legend" id="legendOv">
-      <label><input type="checkbox" id="ovFreq"><span class="key" style="background:var(--ov-freq)"></span>posts</label>
-      <label><input type="checkbox" id="ovText"><span class="key" style="background:var(--ov-text)"></span>text</label>
-      <label><input type="checkbox" id="ovNet"><span class="key" style="background:var(--ov-net)"></span>net score</label>
-      <label><input type="checkbox" id="ovPct"><span class="key" style="background:var(--ov-pct)"></span>% positive</label>
-      <label><input type="checkbox" id="ovAvg"><span class="key" style="background:var(--ov-avg)"></span>avg score</label>
-    </div>
     <a class="tab" id="tab3d" href="experiment.html">In fabulous 3D</a>
     <div id="smoothRow">
       <input type="range" id="smoothSlider" min="0" max="100" value="54" title="Smoothing">
@@ -263,6 +254,7 @@
     <div class="controls">
       <nav class="tabs">
         <button class="tab" id="tabPosts" style="display:none">Posts</button>
+        <button class="tab" id="tabTrends">Trends</button>
         <button class="tab" id="tabDist">Score distribution</button>
         <button class="tab" id="tabLdist">Length distribution</button>
         <button class="tab" id="tabSdist">Subreddit distribution</button>
@@ -323,6 +315,26 @@
     if (d.score > 1) w.pos++;
     w.text += d.len;
   }
+
+  // the six weekly trend metrics, each drawn in its own normalized section
+  const fmtNum = v => {
+    const a = Math.abs(v);
+    if (a >= 10000) return (v / 1000).toFixed(a >= 100000 ? 0 : 1) + 'k';
+    if (a >= 100) return String(Math.round(v));
+    if (a >= 10) return String(Math.round(v * 10) / 10);
+    return String(Math.round(v * 100) / 100);
+  };
+  const TRENDS = [
+    { label: 'posts / day', color: () => C.ovFreq, fmt: fmtNum, vals: weeks.map(w => w.count / 7) },
+    { label: 'text (chars) / day', color: () => C.ovText, fmt: fmtNum, vals: weeks.map(w => w.text / 7) },
+    { label: 'net score / day', color: () => C.ovNet, fmt: fmtNum, vals: weeks.map(w => w.net / 7) },
+    { label: '% positive', color: () => C.ovPct, fmt: v => Math.round(v) + '%', vals: weeks.map(w => w.count ? w.pos / w.count * 100 : null) },
+    { label: 'avg score', color: () => C.ovAvg, fmt: fmtNum, vals: weeks.map(w => w.count ? w.net / w.count : null) },
+    { label: 'avg length (chars)', color: () => C.accent, fmt: fmtNum, vals: weeks.map(w => w.count ? w.text / w.count : null) },
+  ];
+  let trendsSm = null;      // smoothed series per section, cached per draw
+  let trendsGeom = null;    // per-section layout, for hover
+  let trendsHoverW = -1;    // hovered week index
   // every item ranked by score, for the "Score distribution" view
   const distItems = items.slice().sort((a, b) => b.score - a.score || a.time - b.time);
   distItems.forEach((d, i) => { d.drank = i + 1; });
@@ -406,6 +418,12 @@
   // base (untransformed) data->pixel mapping, recomputed on resize / scale change
   let bx = { min: t0, max: t1 }, by = { min: 0, max: 1 };
   function computeBase() {
+    if (mode === 'trends') {
+      const tpad = (t1 - t0) * 0.02 || 1;
+      bx = { min: t0 - tpad, max: t1 + tpad };
+      by = { min: 0, max: 1 };
+      return;
+    }
     if (mode === 'sdist') {
       const tpad = (t1 - t0) * 0.02 || 1;
       bx = { min: t0 - tpad, max: t1 + tpad };
@@ -459,6 +477,7 @@
   }
 
   function yTicks() {
+    if (mode === 'trends') return [];
     if (mode === 'sdist' && sdistNorm) {
       return [0, 0.25, 0.5, 0.75, 1]
         .map(v => ({ v, label: Math.round(v * 100) + '%' }))
@@ -546,8 +565,6 @@
   }
 
   let hovered = null, pinned = null;
-  let overlayPts = [];    // per drawn overlay: {pts:[{x,y,v}], fmt, color}
-  let overlayHover = null; // {x, y, text, color}
 
   function draw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -569,7 +586,7 @@
     }
     // zero line for score, slightly stronger
     const zy = Math.round(yPix(0)) + 0.5;
-    if (zy > M.top && zy < H - M.bottom) {
+    if (mode !== 'trends' && zy > M.top && zy < H - M.bottom) {
       ctx.strokeStyle = C.baseline;
       ctx.beginPath();
       ctx.moveTo(M.left, zy);
@@ -581,14 +598,16 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(mode === 'dist' ? 'rank by score →' : mode === 'ldist' ? 'rank by length →' : 'time →', M.left + plotW() / 2, H - 8);
-    ctx.save();
-    ctx.translate(14, M.top + plotH() / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText(mode === 'sdist'
-      ? (sdistNorm ? (sdistMetric === 'score' ? 'share of points' : 'share of posts')
-        : (sdistMetric === 'score' ? 'points / week' : 'posts / week'))
-      : (mode === 'ltime' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
-    ctx.restore();
+    if (mode !== 'trends') {
+      ctx.save();
+      ctx.translate(14, M.top + plotH() / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(mode === 'sdist'
+        ? (sdistNorm ? (sdistMetric === 'score' ? 'share of points' : 'share of posts')
+          : (sdistMetric === 'score' ? 'points / week' : 'posts / week'))
+        : (mode === 'ltime' || mode === 'ldist' ? 'length (chars)' : 'score') + (useLog ? ' (log)' : ''), 0, 0);
+      ctx.restore();
+    }
 
     // clip to plot area for dots
     ctx.save();
@@ -596,7 +615,81 @@
     ctx.rect(M.left, M.top, plotW(), plotH());
     ctx.clip();
 
-    if (mode === 'sdist') {
+    if (mode === 'trends') {
+      // six small-multiple sections, each metric normalized to its own
+      // range, linear scale, smoothed by the shared slider
+      const gap = 12;
+      const rows = TRENDS.length;
+      const rowH = (plotH() - gap * (rows - 1)) / rows;
+      trendsSm = TRENDS.map(m => smoothSeries(m.vals, smoothSigma));
+      trendsGeom = [];
+      for (let i = 0; i < rows; i++) {
+        const yTop = M.top + i * (rowH + gap);
+        const sm = trendsSm[i];
+        let mn = Infinity, mx2 = -Infinity;
+        for (const v of sm) {
+          if (v === null) continue;
+          if (v < mn) mn = v;
+          if (v > mx2) mx2 = v;
+        }
+        if (!(mx2 > mn)) { mn = 0; mx2 = 1; }
+        const pad2 = (mx2 - mn) * 0.08 || 1;
+        const lo = mn - pad2, hi = mx2 + pad2;
+        trendsGeom.push({ yTop, rowH, lo, hi });
+        // section backdrop line at the bottom
+        ctx.strokeStyle = C.grid;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(M.left, yTop + rowH + 0.5);
+        ctx.lineTo(W - M.right, yTop + rowH + 0.5);
+        ctx.stroke();
+        // the metric line
+        ctx.strokeStyle = TRENDS[i].color();
+        ctx.lineWidth = 2;
+        ctx.lineJoin = ctx.lineCap = 'round';
+        ctx.beginPath();
+        let pen = false;
+        for (let w = 0; w < weeks.length; w++) {
+          const v = sm[w];
+          if (v === null) { pen = false; continue; }
+          const lx = xPix(weeks[w].t);
+          const ly = yTop + rowH - (v - lo) / (hi - lo) * rowH;
+          if (pen) ctx.lineTo(lx, ly); else { ctx.moveTo(lx, ly); pen = true; }
+        }
+        ctx.stroke();
+        // section labeling: title plus its own min / max
+        ctx.font = '600 12px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = TRENDS[i].color();
+        ctx.fillText(TRENDS[i].label, M.left + 8, yTop + 2);
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = C.muted;
+        ctx.fillText(TRENDS[i].fmt(mx2), W - M.right - 4, yTop + 2);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(TRENDS[i].fmt(mn), W - M.right - 4, yTop + rowH - 2);
+      }
+      // hover guide: vertical week line with a dot per section
+      if (trendsHoverW >= 0 && trendsHoverW < weeks.length) {
+        const gx = xPix(weeks[trendsHoverW].t);
+        ctx.strokeStyle = C.baseline;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(gx + 0.5, M.top);
+        ctx.lineTo(gx + 0.5, H - M.bottom);
+        ctx.stroke();
+        for (let i = 0; i < rows; i++) {
+          const v = trendsSm[i][trendsHoverW];
+          if (v === null) continue;
+          const g2 = trendsGeom[i];
+          ctx.fillStyle = TRENDS[i].color();
+          ctx.beginPath();
+          ctx.arc(gx, g2.yTop + g2.rowH - (v - g2.lo) / (g2.hi - g2.lo) * g2.rowH, 3.5, 0, 6.2832);
+          ctx.fill();
+        }
+      }
+    } else if (mode === 'sdist') {
       // 100% stacked area: each week is a pie of subreddit shares, swept
       // over time; smoothing (shared slider) is applied to the raw counts
       sdistSmoothed();
@@ -724,101 +817,6 @@
       pctLineY = null;
     }
 
-    if (mode === 'time' || mode === 'ltime') {
-    // overlay lines: weekly aggregates on the same (shared) y axis
-    const sv = useLog ? symlog : (v => v);
-    const fmtNum = v => {
-      const a = Math.abs(v);
-      if (a >= 10000) return (v / 1000).toFixed(a >= 100000 ? 0 : 1) + 'k';
-      if (a >= 100) return String(Math.round(v));
-      if (a >= 10) return String(Math.round(v * 10) / 10);
-      return String(Math.round(v * 100) / 100);
-    };
-    const series = [];
-    if (ovFreq.checked) series.push({ color: C.ovFreq, fmt: fmtNum, hfmt: v => fmtNum(v) + ' posts/day', raw: weeks.map(w => w.count / 7) });
-    if (ovText.checked) series.push({ color: C.ovText, fmt: fmtNum, hfmt: v => fmtNum(v) + ' chars/day', raw: weeks.map(w => w.text / 7) });
-    if (ovNet.checked) series.push({ color: C.ovNet, fmt: fmtNum, hfmt: v => fmtNum(v) + ' net score/day', raw: weeks.map(w => w.net / 7) });
-    if (ovPct.checked) series.push({ color: C.ovPct, fmt: v => Math.round(v) + '%', hfmt: v => Math.round(v) + '% positive', raw: weeks.map(w => w.count ? w.pos / w.count * 100 : null) });
-    if (ovAvg.checked) series.push({ color: C.ovAvg, fmt: fmtNum, hfmt: v => fmtNum(v) + ' avg score', raw: weeks.map(w => w.count ? w.net / w.count : null) });
-    ctx.lineJoin = ctx.lineCap = 'round';
-    const endLabels = [];
-    overlayPts = [];
-    for (const s of series) {
-      // normalize each overlay to its own range so its amplitude is
-      // independent of the dots' axis; the range comes from the UNSMOOTHED
-      // series so the smoothing slider only averages, never rescales
-      let tmin = Infinity, tmax = -Infinity;
-      for (const v of s.raw) {
-        if (v === null) continue;
-        const t = sv(v);
-        if (t < tmin) tmin = t;
-        if (t > tmax) tmax = t;
-      }
-      const span = tmax - tmin || 1;
-      const ny = t => by.min + (t - tmin) / span * (by.max - by.min);
-      const vals = smoothSeries(s.raw, smoothSigma);
-      const pts = [];
-      ctx.strokeStyle = s.color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      let pen = false, first = -1, last = -1;
-      for (let i = 0; i < weeks.length; i++) {
-        const v = vals[i];
-        if (v === null) { pen = false; continue; }
-        if (first < 0) first = i;
-        last = i;
-        const lx = xPix(weeks[i].t), ly = yPix(ny(sv(v)));
-        pts.push({ x: lx, y: ly, v });
-        if (pen) ctx.lineTo(lx, ly); else { ctx.moveTo(lx, ly); pen = true; }
-      }
-      ctx.stroke();
-      overlayPts.push({ pts, fmt: s.hfmt, color: s.color });
-      if (first >= 0) {
-        for (const [i, align, dx] of [[first, 'left', 4], [last, 'right', -4]]) {
-          endLabels.push({
-            x: xPix(weeks[i].t) + dx,
-            y: Math.max(M.top + 8, Math.min(H - M.bottom - 8, yPix(ny(sv(vals[i]))) - 11)),
-            align, text: s.fmt(vals[i]), color: s.color,
-          });
-        }
-      }
-    }
-    // endpoint value labels in each series' color, with a surface halo;
-    // labels on the same side are nudged apart so they never overlap
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.textBaseline = 'middle';
-    for (const align of ['left', 'right']) {
-      const g = endLabels.filter(L => L.align === align).sort((a, b) => a.y - b.y);
-      for (let i = 1; i < g.length; i++) {
-        if (g[i].y < g[i - 1].y + 13) g[i].y = g[i - 1].y + 13;
-      }
-    }
-    for (const L of endLabels) {
-      ctx.textAlign = L.align;
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = C.surface;
-      ctx.fillStyle = L.color;
-      ctx.strokeText(L.text, L.x, L.y);
-      ctx.fillText(L.text, L.x, L.y);
-    }
-    // hovered point on an overlay line: marker dot + value label
-    if (overlayHover) {
-      ctx.fillStyle = C.surface;
-      ctx.beginPath(); ctx.arc(overlayHover.x, overlayHover.y, 6, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = overlayHover.color;
-      ctx.beginPath(); ctx.arc(overlayHover.x, overlayHover.y, 4, 0, 6.2832); ctx.fill();
-      ctx.font = '600 11px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const hx = Math.max(M.left + 20, Math.min(W - M.right - 20, overlayHover.x));
-      const hy = Math.max(M.top + 8, overlayHover.y - 14);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = C.surface;
-      ctx.strokeText(overlayHover.text, hx, hy);
-      ctx.fillText(overlayHover.text, hx, hy);
-    }
-    } // end scatter overlays
-
     // highlight hovered / pinned
     for (const d of [hovered, pinned]) {
       if (!d) continue;
@@ -891,18 +889,6 @@
       const dx = d.px - mx, dy = d.py - my;
       const dist = dx * dx + dy * dy;
       if (dist < bestD) { bestD = dist; best = d; }
-    }
-    return best;
-  }
-
-  function overlayNearest(mx, my) {
-    let best = null, bestD = 12 * 12;
-    for (const s of overlayPts) {
-      for (const p of s.pts) {
-        const dx = p.x - mx, dy = p.y - my;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, text: s.fmt(p.v), color: s.color }; }
-      }
     }
     return best;
   }
@@ -1051,7 +1037,6 @@
       return;
     }
     dragging = true; moved = 0;
-    overlayHover = null;
     lastX = e.clientX; lastY = e.clientY;
     canvas.classList.add('dragging');
     canvas.setPointerCapture(e.pointerId);
@@ -1085,13 +1070,15 @@
       sdistHover(mx, my, e.clientX, e.clientY);
       return;
     }
+    if (mode === 'trends') {
+      canvas.style.cursor = '';
+      trendsHover(mx, my, e.clientX, e.clientY);
+      return;
+    }
     canvas.style.cursor = pctLineHit(my) ? 'ns-resize' : '';
     const d = nearest(mx, my);
-    const oh = overlayNearest(mx, my);
-    const ohChanged = (oh && overlayHover && (oh.x !== overlayHover.x || oh.y !== overlayHover.y || oh.color !== overlayHover.color)) || (!oh !== !overlayHover);
-    if (d !== hovered || ohChanged) {
+    if (d !== hovered) {
       hovered = d;
-      overlayHover = oh;
       if (!pinned) showDetail(d, false);
       requestAnimationFrame(draw);
     }
@@ -1107,7 +1094,7 @@
       requestAnimationFrame(draw);
       return;
     }
-    if (moved < 5 && mode !== 'sdist') {
+    if (moved < 5 && mode !== 'sdist' && mode !== 'trends') {
       const r = canvas.getBoundingClientRect();
       const d = nearest(e.clientX - r.left, e.clientY - r.top);
       pinned = d;
@@ -1117,15 +1104,14 @@
   });
   canvas.addEventListener('pointerleave', () => {
     hovered = null;
-    overlayHover = null;
     tip.style.display = 'none';
     if (mode === 'sdist') { setSdistHoverBand(-1); sdistDefault(); }
+    else if (mode === 'trends') trendsClear();
     else if (!pinned) showDetail(null, false);
     requestAnimationFrame(draw);
   });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    overlayHover = null;
     const r = canvas.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
     const f = Math.pow(1.0015, -e.deltaY);
@@ -1155,11 +1141,6 @@
     divider.classList.remove('dragging');
   });
 
-  const ovFreq = document.getElementById('ovFreq');
-  const ovText = document.getElementById('ovText');
-  const ovNet = document.getElementById('ovNet');
-  const ovPct = document.getElementById('ovPct');
-  const ovAvg = document.getElementById('ovAvg');
   const smoothRow = document.getElementById('smoothRow');
   const smoothSlider = document.getElementById('smoothSlider');
   const smoothVal = document.getElementById('smoothVal');
@@ -1185,9 +1166,7 @@
     });
   }
   function updateSmoothRow() {
-    const any = [ovFreq, ovText, ovNet, ovPct, ovAvg].some(c => c.checked);
-    smoothRow.classList.toggle('visible',
-      mode === 'sdist' || ((mode === 'time' || mode === 'ltime') && any));
+    smoothRow.classList.toggle('visible', mode === 'sdist' || mode === 'trends');
   }
   function applySmooth() {
     const v = +smoothSlider.value;
@@ -1202,8 +1181,44 @@
     requestAnimationFrame(draw);
   });
 
-  for (const el of [ovFreq, ovText, ovNet, ovPct, ovAvg]) {
-    el.addEventListener('change', () => { updateSmoothRow(); requestAnimationFrame(draw); });
+  // trends hover: crosshair week with a full readout in the detail panel
+  function trendsClear() {
+    if (trendsHoverW !== -1) {
+      trendsHoverW = -1;
+      requestAnimationFrame(draw);
+    }
+    tip.style.display = 'none';
+    if (mode === 'trends') showDetail(null, false);
+  }
+  function trendsHover(mx, my, cx, cy) {
+    if (!trendsGeom) return;
+    const t = xInv(mx);
+    const w = Math.round((t - w0 - MS_WEEK / 2) / MS_WEEK);
+    if (w < 0 || w >= weeks.length) { trendsClear(); return; }
+    if (w !== trendsHoverW) {
+      trendsHoverW = w;
+      requestAnimationFrame(draw);
+    }
+    let sec = -1;
+    trendsGeom.forEach((g2, i) => {
+      if (my >= g2.yTop && my <= g2.yTop + g2.rowH) sec = i;
+    });
+    if (sec >= 0 && trendsSm && trendsSm[sec][w] !== null) {
+      tip.textContent = TRENDS[sec].label + ' · ' + TRENDS[sec].fmt(trendsSm[sec][w]);
+      tip.style.display = 'block';
+      tip.style.left = cx + 'px';
+      tip.style.top = (cy - 12) + 'px';
+    } else {
+      tip.style.display = 'none';
+    }
+    detail.replaceChildren();
+    const meta = el('div', 'meta');
+    meta.append(el('span', 'score', 'week of ' + new Date(weeks[w].t - MS_WEEK / 2).toLocaleDateString(undefined, { dateStyle: 'medium' })));
+    for (let i = 0; i < TRENDS.length; i++) {
+      const v = trendsSm ? trendsSm[i][w] : null;
+      meta.append(el('span', 'k', TRENDS[i].label + ': ' + (v === null ? '—' : TRENDS[i].fmt(v))));
+    }
+    detail.append(meta);
   }
 
   function toggleLabel() {
@@ -1221,6 +1236,7 @@
   const ryScore = document.getElementById('ryScore');
   const ryLen = document.getElementById('ryLen');
   const tabPosts = document.getElementById('tabPosts');
+  const tabTrends = document.getElementById('tabTrends');
   const tabDist = document.getElementById('tabDist');
   const tabLdist = document.getElementById('tabLdist');
   const tabSdist = document.getElementById('tabSdist');
@@ -1236,15 +1252,17 @@
     // the title names the active view; the right-side tabs list the others
     const scatter = m === 'time' || m === 'ltime';
     viewTitle.textContent = scatter ? 'Posts'
+      : m === 'trends' ? 'Trends'
       : m === 'dist' ? 'Score distribution'
       : m === 'ldist' ? 'Length distribution'
       : 'Subreddit distribution';
     tabPosts.style.display = scatter ? 'none' : '';
+    tabTrends.style.display = m === 'trends' ? 'none' : '';
     tabDist.style.display = m === 'dist' ? 'none' : '';
     tabLdist.style.display = m === 'ldist' ? 'none' : '';
     tabSdist.style.display = m === 'sdist' ? 'none' : '';
-    document.body.classList.toggle('mode-top', m === 'dist' || m === 'ldist' || m === 'sdist');
-    scaleToggle.style.display = m === 'sdist' ? 'none' : '';
+    document.body.classList.toggle('mode-top', !scatter);
+    scaleToggle.style.display = m === 'sdist' || m === 'trends' ? 'none' : '';
     document.getElementById('tip').style.display = 'none';
     document.getElementById('sdistRadios').style.display = m === 'sdist' ? '' : 'none';
     updateSmoothRow();
@@ -1279,6 +1297,7 @@
     requestAnimationFrame(draw);
   });
   tabPosts.addEventListener('click', () => setMode(ryLen.checked ? 'ltime' : 'time'));
+  tabTrends.addEventListener('click', () => setMode('trends'));
   tabDist.addEventListener('click', () => setMode('dist'));
   tabLdist.addEventListener('click', () => setMode('ldist'));
   tabSdist.addEventListener('click', () => setMode('sdist'));
