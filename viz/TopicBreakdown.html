@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What Greg Posts About</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fff;
+    --text: #0b0b0b;
+    --secondary: #52514e;
+    --muted: #898781;
+    --border: rgba(11, 11, 11, 0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text: #fff;
+      --secondary: #c3c2b7;
+      --muted: #898781;
+      --border: rgba(255, 255, 255, 0.13);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 19px; }
+  header a {
+    margin-left: auto;
+    padding: 5px 10px;
+    color: inherit;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 13px;
+  }
+  main {
+    width: min(1080px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 30px 0 50px;
+  }
+  .intro {
+    max-width: 780px;
+    margin-bottom: 24px;
+    color: var(--secondary);
+    line-height: 1.55;
+  }
+  .intro strong { color: var(--text); }
+  .stack {
+    display: flex;
+    height: 34px;
+    overflow: hidden;
+    margin: 20px 0 8px;
+    border-radius: 7px;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .stack div {
+    min-width: 1px;
+    height: 100%;
+    transition: filter 120ms ease;
+  }
+  .stack div:hover { filter: brightness(1.18); }
+  .stack-caption {
+    margin-bottom: 24px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .topics { display: grid; gap: 8px; }
+  details {
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  summary {
+    display: grid;
+    grid-template-columns: minmax(230px, 1fr) minmax(180px, 2fr) 120px;
+    align-items: center;
+    gap: 18px;
+    padding: 13px 16px;
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "▸";
+    position: absolute;
+    margin-left: -12px;
+    color: var(--muted);
+  }
+  details[open] summary::before { content: "▾"; }
+  .topic-name {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-weight: 650;
+  }
+  .swatch {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .bar-track {
+    height: 8px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border-radius: 4px;
+  }
+  .bar { height: 100%; min-width: 2px; border-radius: inherit; }
+  .amount { text-align: right; color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .amount strong { display: inline-block; min-width: 48px; color: var(--text); }
+  .details-body {
+    padding: 0 16px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .description { margin: 14px 0 10px; color: var(--secondary); }
+  .subreddits {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .subreddit {
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    color: var(--secondary);
+    font-size: 12px;
+  }
+  .examples { margin: 0; padding-left: 20px; }
+  .examples li { margin: 7px 0; color: var(--secondary); }
+  .examples a { color: inherit; text-decoration-color: var(--muted); }
+  .examples a:hover { color: var(--text); }
+  .examples small { color: var(--muted); }
+  .method {
+    margin-top: 26px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  @media (max-width: 700px) {
+    main { width: min(100% - 20px, 1080px); padding-top: 20px; }
+    summary { grid-template-columns: 1fr 86px; gap: 10px; }
+    .bar-track { grid-column: 1 / -1; grid-row: 2; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>What Greg Posts About</h1>
+  <a href="index.html">2D Dashboard</a>
+</header>
+<main>
+  <div class="intro" id="intro"></div>
+  <div class="stack" id="stack" aria-label="All topics as proportions of the complete dataset"></div>
+  <div class="stack-caption">All 20 topics, sized by their share of the complete history.</div>
+  <section class="topics" id="topics" aria-label="Topic breakdown"></section>
+  <div class="method">
+    This is a deterministic conceptual classification of the committed demo dataset, not an AI-generated
+    judgment about individual posts. Each record is assigned once using its title, comment-thread title,
+    body text, and subreddit context. The taxonomy and build script are in <code>build_topics.py</code>.
+    Broad or ambiguous discussions naturally fall into “Current events &amp; general discussion.”
+  </div>
+</main>
+<script src="topic-data.js"></script>
+<script>
+(() => {
+  const percent = share => (share * 100).toFixed(1) + '%';
+  const intro = document.getElementById('intro');
+  intro.append(
+    document.createTextNode('A conceptual breakdown of '),
+    Object.assign(document.createElement('strong'), {
+      textContent: REDDIT_TOPICS.total.toLocaleString() + ' posts and comments',
+    }),
+    document.createTextNode(
+      ` (${REDDIT_TOPICS.posts.toLocaleString()} submitted posts and ` +
+      `${REDDIT_TOPICS.comments.toLocaleString()} comments). Each record belongs to exactly one of 20 buckets.`
+    )
+  );
+
+  const stack = document.getElementById('stack');
+  const topics = document.getElementById('topics');
+  for (const topic of REDDIT_TOPICS.topics) {
+    const segment = document.createElement('div');
+    segment.style.width = percent(topic.share);
+    segment.style.background = topic.color;
+    segment.title = `${topic.name}: ${percent(topic.share)}`;
+    stack.append(segment);
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    const name = document.createElement('span');
+    name.className = 'topic-name';
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = topic.color;
+    name.append(swatch, document.createTextNode(topic.name));
+
+    const track = document.createElement('span');
+    track.className = 'bar-track';
+    const bar = document.createElement('span');
+    bar.className = 'bar';
+    bar.style.width = percent(topic.share);
+    bar.style.background = topic.color;
+    track.append(bar);
+
+    const amount = document.createElement('span');
+    amount.className = 'amount';
+    const share = document.createElement('strong');
+    share.textContent = percent(topic.share);
+    amount.append(share, document.createTextNode(` · ${topic.count.toLocaleString()}`));
+    summary.append(name, track, amount);
+
+    const body = document.createElement('div');
+    body.className = 'details-body';
+    const description = document.createElement('p');
+    description.className = 'description';
+    description.textContent = topic.description;
+    const subreddits = document.createElement('div');
+    subreddits.className = 'subreddits';
+    for (const subreddit of topic.subreddits) {
+      const chip = document.createElement('span');
+      chip.className = 'subreddit';
+      chip.textContent = `r/${subreddit.name} · ${subreddit.count.toLocaleString()}`;
+      subreddits.append(chip);
+    }
+    const examples = document.createElement('ol');
+    examples.className = 'examples';
+    for (const example of topic.examples) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = example.link;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = example.text;
+      const context = document.createElement('small');
+      context.textContent = ` · r/${example.sub} · ${example.type}`;
+      item.append(link, context);
+      examples.append(item);
+    }
+    body.append(description, subreddits, examples);
+    details.append(summary, body);
+    topics.append(details);
+  }
+})();
+</script>
+</body>
+</html>

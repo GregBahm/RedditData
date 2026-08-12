@@ -199,7 +199,26 @@
   #detail .meta .k { color: var(--text-secondary); }
   #detail .title { font-weight: 600; margin-bottom: 4px; }
   #detail .thread { font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
-  #detail .body { color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
+  #detail .body { color: var(--text-secondary); overflow-wrap: break-word; }
+  #detail .body p { margin: 0 0 6px; }
+  #detail .body p:last-child { margin-bottom: 0; }
+  #detail .body h1, #detail .body h2, #detail .body h3 {
+    margin: 8px 0 4px;
+    font-size: 1.08em;
+  }
+  #detail .body ul, #detail .body ol { margin: 4px 0; padding-left: 22px; }
+  #detail .body blockquote { margin: 5px 0; padding-left: 10px; border-left: 2px solid currentColor; opacity: 0.8; }
+  #detail .body code { padding: 1px 3px; border-radius: 3px; background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
+  #detail .body pre { margin: 5px 0; padding: 7px; overflow: auto; border-radius: 4px; background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+  #detail .body pre code { padding: 0; background: none; }
+  #detail .media { margin-top: 8px; color: var(--text-muted); font-size: 12px; }
+  #detail .media img, #detail .media video {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    margin: 0 auto;
+    border-radius: 6px;
+  }
   #detail a { color: var(--accent); text-decoration: none; }
   #detail a:hover { text-decoration: underline; }
   #detail .pin-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
@@ -259,6 +278,7 @@
 
 <script src="data.js"></script>
 <script src="import/dataset-store.js"></script>
+<script src="post-content.js"></script>
 <script>
 (async () => {
   const params = new URLSearchParams(location.search);
@@ -857,7 +877,9 @@
     return e;
   }
   let detailPointerY = null;
+  let detailContentToken = 0;
   function showDetail(d, isPinned) {
+    const contentToken = ++detailContentToken;
     if (document.body.classList.contains('embed') &&
         ['time', 'ltime', 'dist', 'ldist'].includes(mode)) {
       parent.postMessage({
@@ -865,6 +887,7 @@
         pinned: !!isPinned,
         pointerY: detailPointerY,
         detail: d ? {
+          id: d.id,
           score: d.score,
           scoreAvailable: d.scoreAvailable,
           time: d.time,
@@ -910,7 +933,19 @@
     detail.append(meta);
     if (d.title) detail.append(el('div', 'title', d.title));
     if (d.thread) detail.append(el('div', 'thread', 'in: ' + d.thread));
-    detail.append(el('div', 'body', d.body || (d.type === 'post' ? '(link post — no text)' : '(no text)')));
+    if (d.body) {
+      detail.append(RedditPostContent.renderMarkdown(d.body));
+    } else if (d.type !== 'post') {
+      detail.append(el('div', 'body', '(no text)'));
+    }
+    if (!isEmbedded && d.type === 'post' && d.id) {
+      const media = el('div', 'media');
+      detail.append(media);
+      RedditPostContent.appendMedia(media, d, {
+        controls: !!isPinned,
+        isCurrent: () => contentToken === detailContentToken,
+      });
+    }
     if (isPinned) {
       const note = el('div', 'pin-note');
       const a = el('a', null, 'open on reddit ↗');

@@ -12,6 +12,11 @@ distribution, trends, and path-traced 3D views.
 Open the [live visualization](https://gregbahm.github.io/RedditData/) to explore
 the built-in demo or select **Show me my own data**.
 
+The demo also includes a standalone
+[20-topic breakdown](https://gregbahm.github.io/RedditData/viz/TopicBreakdown.html)
+of the complete committed posting history. Regenerate it with
+`python build_topics.py`.
+
 To visualize your own history:
 
 1. Request an export from [Reddit's data request page](https://www.reddit.com/settings/data-request).

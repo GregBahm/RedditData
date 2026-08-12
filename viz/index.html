@@ -207,7 +207,43 @@
   #postDetail .secondary { color: var(--secondary); }
   #postDetail .title { margin-bottom: 4px; font-weight: 600; }
   #postDetail .thread { margin-bottom: 4px; color: var(--secondary); font-weight: 600; }
-  #postDetail .body { color: var(--secondary); white-space: pre-wrap; overflow-wrap: break-word; }
+  #postDetail .body { color: var(--secondary); overflow-wrap: break-word; }
+  #postDetail .body p { margin: 0 0 6px; }
+  #postDetail .body p:last-child { margin-bottom: 0; }
+  #postDetail .body h1,
+  #postDetail .body h2,
+  #postDetail .body h3 { margin: 8px 0 4px; font-size: 1.08em; }
+  #postDetail .body ul,
+  #postDetail .body ol { margin: 4px 0; padding-left: 22px; }
+  #postDetail .body blockquote {
+    margin: 5px 0;
+    padding-left: 10px;
+    border-left: 2px solid currentColor;
+    opacity: 0.8;
+  }
+  #postDetail .body code {
+    padding: 1px 3px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+  }
+  #postDetail .body pre {
+    margin: 5px 0;
+    padding: 7px;
+    overflow: auto;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  #postDetail .body pre code { padding: 0; background: none; }
+  #postDetail .media { margin-top: 8px; color: var(--muted); font-size: 12px; }
+  #postDetail .media img,
+  #postDetail .media video {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    margin: 0 auto;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
   #postDetail .pin-note { margin-top: 8px; color: var(--muted); font-size: 12px; }
   #postDetail a { color: var(--accent); text-decoration: none; }
   #postDetail a:hover { text-decoration: underline; }
@@ -232,6 +268,7 @@
   <h1 id="pageTitle"><a href="https://www.reddit.com/u/GregBahm">u/GregBahm</a>'s Reddit Addiction Visualized</h1>
   <div class="import-actions">
     <span class="dataset-status" id="datasetStatus"></span>
+    <a class="control" href="TopicBreakdown.html">Topic Breakdown</a>
     <button class="control" id="clearImported" type="button" hidden>Restore demo data</button>
     <button class="control" id="importOpen" type="button">Show me my own data</button>
   </div>
@@ -357,6 +394,7 @@
 <script src="import/dataset-store.js"></script>
 <script src="import/reddit-export.js"></script>
 <script src="import/arctic-shift.js"></script>
+<script src="post-content.js"></script>
 <script>
 (() => {
   const slider = document.getElementById('smoothSlider');
@@ -371,6 +409,7 @@
     ['Posts', 'Score Distribution', 'Post Length Distribution'].includes(frame.title)
   );
   const postDetail = document.getElementById('postDetail');
+  let postDetailToken = 0;
 
   function smoothingLabel(v) {
     if (v === 0) return 'off';
@@ -461,6 +500,7 @@
     const sourceFrame = detailFrames.find(frame => frame.contentWindow === e.source);
     if (!sourceFrame || e.data?.type !== 'reddit-data-post-detail') return;
     const d = e.data.detail;
+    const token = ++postDetailToken;
     postDetail.replaceChildren();
     postDetail.hidden = !d;
     if (!d) return;
@@ -483,7 +523,20 @@
     postDetail.append(meta);
     if (d.title) addText(postDetail, 'div', 'title', d.title);
     if (d.thread) addText(postDetail, 'div', 'thread', 'in: ' + d.thread);
-    addText(postDetail, 'div', 'body', d.body || (d.type === 'post' ? '(link post — no text)' : '(no text)'));
+    if (d.body) {
+      postDetail.append(RedditPostContent.renderMarkdown(d.body));
+    } else if (d.type !== 'post') {
+      addText(postDetail, 'div', 'body', '(no text)');
+    }
+    if (d.type === 'post' && d.id) {
+      const media = document.createElement('div');
+      media.className = 'media';
+      postDetail.append(media);
+      RedditPostContent.appendMedia(media, d, {
+        controls: !!e.data.pinned,
+        isCurrent: () => token === postDetailToken && !postDetail.hidden,
+      });
+    }
 
     if (e.data.pinned) {
       const note = document.createElement('div');

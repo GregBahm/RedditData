@@ -180,6 +180,7 @@
 </div>
 <script src="data.js"></script>
 <script src="import/dataset-store.js"></script>
+<script src="post-content.js"></script>
 <script>
 (async () => {
   // ---- data ----
@@ -1160,12 +1161,15 @@
     pickPanel.append(meta);
     if (d.title) pickPanel.append(el2('div', 'title', d.title));
     if (d.thread) pickPanel.append(el2('div', 'thread', 'in: ' + d.thread));
-    if (d.body) pickPanel.append(renderMarkdown(d.body));
+    if (d.body) pickPanel.append(RedditPostContent.renderMarkdown(d.body));
     else if (d.type !== 'post') pickPanel.append(el2('div', 'body', '(no text)'));
     if (d.type === 'post' && d.id) {
       const media = el2('div', 'media');
       pickPanel.append(media);
-      appendMedia(media, d, i, pinned);
+      RedditPostContent.appendMedia(media, d, {
+        controls: pinned,
+        isCurrent: () => pickPanel._for === i,
+      });
     }
     if (pinned) {
       const note = el2('div', 'note');
