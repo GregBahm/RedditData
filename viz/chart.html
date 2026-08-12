@@ -154,12 +154,7 @@
   #chart { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
   #chart.dragging { cursor: grabbing; }
   #hint {
-    position: absolute;
-    top: 8px;
-    right: 12px;
-    font-size: 12px;
-    color: var(--text-muted);
-    pointer-events: none;
+    display: none;
   }
   #divider {
     height: 12px;
@@ -256,7 +251,7 @@
 </header>
 <div id="chart-wrap">
   <canvas id="chart"></canvas>
-  <div id="hint">scroll to zoom · drag to pan · click a dot to pin</div>
+  <div id="hint">drag to pan · click a dot to pin</div>
 </div>
 <div id="divider" title="Drag to resize"></div>
 <div id="detail"><span class="placeholder">Hover over a dot to see the post here.</span></div>
@@ -266,6 +261,9 @@
 <script src="import/dataset-store.js"></script>
 <script>
 (async () => {
+  const params = new URLSearchParams(location.search);
+  const isEmbedded = params.get('embed') === '1';
+  if (isEmbedded) document.body.classList.add('embed');
   const canvas = document.getElementById('chart');
   const ctx = canvas.getContext('2d');
   const wrap = document.getElementById('chart-wrap');
@@ -397,18 +395,6 @@
     return sdistSm;
   }
 
-  // draggable percentile marker lines in the scatter views
-  const pctile = (arr, p) => arr[Math.floor(p * (arr.length - 1))];
-  const scoresAsc = items.map(d => d.score).sort((a, b) => a - b);
-  const lensAsc = items.map(d => d.len).sort((a, b) => a - b);
-  const countLE = (arr, v) => {
-    let lo = 0, hi = arr.length;
-    while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] <= v) lo = m + 1; else hi = m; }
-    return lo;
-  };
-  let topPct = 5, botPct = 5;   // percent of items above / below the marker lines
-  let pctLineY = null;          // screen y of each line, set during draw, for hit tests
-
   // ---- scales / view modes ----
   // 'time': x = time, y = score. 'ltime': x = time, y = post length.
   // 'dist': x = rank among all items, y = score. 'ldist': x = rank by length, y = length.
@@ -465,6 +451,38 @@
 
   // pan/zoom transform in pixel space; y is inverted (bigger score = higher on screen)
   let view = { kx: 1, ky: 1, tx: 0, ty: 0 };
+  function zoomView(f, mx = W / 2, my = H / 2) {
+    const nextKx = Math.max(0.05, Math.min(100, view.kx * f));
+    const nextKy = Math.max(0.05, Math.min(100, view.ky * f));
+    const fx = nextKx / view.kx;
+    const fy = nextKy / view.ky;
+    view.kx = nextKx;
+    view.ky = nextKy;
+    view.tx = mx - (mx - view.tx) * fx;
+    view.ty = my - (my - view.ty) * fy;
+    requestAnimationFrame(draw);
+    publishTimelineView();
+  }
+  function resetZoom() {
+    view.kx = 1;
+    view.ky = 1;
+    view.tx = 0;
+    view.ty = 0;
+    requestAnimationFrame(draw);
+    publishTimelineView();
+  }
+  function setZoomLevel(level) {
+    const target = Math.pow(2, Math.max(-100, Math.min(100, level)) / 25);
+    const mx = W / 2, my = H / 2;
+    const fx = target / view.kx;
+    const fy = target / view.ky;
+    view.kx = target;
+    view.ky = target;
+    view.tx = mx - (mx - view.tx) * fx;
+    view.ty = my - (my - view.ty) * fy;
+    requestAnimationFrame(draw);
+    publishTimelineView();
+  }
   const plotW = () => W - M.left - M.right;
   const plotH = () => H - M.top - M.bottom;
   const xPix = t => view.tx + view.kx * (M.left + (t - bx.min) / (bx.max - bx.min) * plotW());
@@ -608,7 +626,10 @@
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(mode === 'dist' ? 'rank by score →' : mode === 'ldist' ? 'rank by length →' : 'time →', M.left + plotW() / 2, H - 8);
+    if (mode === 'dist' || mode === 'ldist') {
+      ctx.fillText(mode === 'dist' ? 'rank by score →' : 'rank by length →',
+        M.left + plotW() / 2, H - 8);
+    }
     if (mode !== 'trends') {
       ctx.save();
       ctx.translate(14, M.top + plotH() / 2);
@@ -816,39 +837,6 @@
     } // end non-dist marks
     ctx.globalAlpha = 1;
 
-    // dashed percentile lines, draggable, labeled at the right edge
-    if (mode === 'time' || mode === 'ltime') {
-      const asc = mode === 'time' ? scoresAsc : lensAsc;
-      const entries = [
-        { key: 'top', v: pctile(asc, 1 - topPct / 100), label: `top ${Math.round(topPct)}%` },
-        { key: 'bot', v: pctile(asc, botPct / 100), label: `bottom ${Math.round(botPct)}%` },
-      ];
-      ctx.font = '600 11px system-ui, sans-serif';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'bottom';
-      pctLineY = {};
-      for (const en of entries) {
-        const py = Math.round(yPix(useLog ? symlog(en.v) : en.v)) + 0.5;
-        if (py < M.top || py > H - M.bottom) continue;
-        pctLineY[en.key] = py;
-        ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = C.baseline;
-        ctx.beginPath();
-        ctx.moveTo(M.left, py);
-        ctx.lineTo(W - M.right, py);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = C.surface;
-        ctx.fillStyle = C.muted;
-        ctx.strokeText(en.label, W - M.right - 4, py - 2);
-        ctx.fillText(en.label, W - M.right - 4, py - 2);
-      }
-    } else {
-      pctLineY = null;
-    }
-
     // highlight hovered / pinned
     for (const d of [hovered, pinned]) {
       if (!d) continue;
@@ -956,15 +944,6 @@
     return best;
   }
 
-  const symlogInv = t => Math.sign(t) * (Math.pow(10, Math.abs(t)) - 1);
-  function pctLineHit(my) {
-    if (!pctLineY) return null;
-    for (const k of ['top', 'bot']) {
-      if (pctLineY[k] !== undefined && Math.abs(my - pctLineY[k]) <= 6) return k;
-    }
-    return null;
-  }
-
   // subreddit-distribution detail panel
   const tip = document.getElementById('tip');
   function sdistDefault() {
@@ -1050,16 +1029,9 @@
     });
   }
 
-  let dragging = false, lastX = 0, lastY = 0, moved = 0, lineDrag = null;
+  let dragging = false, lastX = 0, lastY = 0, moved = 0;
   canvas.addEventListener('pointerdown', e => {
     detailPointerY = e.clientY;
-    const r = canvas.getBoundingClientRect();
-    const hit = pctLineHit(e.clientY - r.top);
-    if (hit) {
-      lineDrag = hit;
-      canvas.setPointerCapture(e.pointerId);
-      return;
-    }
     dragging = true; moved = 0;
     lastX = e.clientX; lastY = e.clientY;
     canvas.classList.add('dragging');
@@ -1069,19 +1041,6 @@
     detailPointerY = e.clientY;
     const r = canvas.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
-    if (lineDrag) {
-      const t = yInv(my);
-      const v = useLog ? symlogInv(t) : t;
-      const asc = mode === 'time' ? scoresAsc : lensAsc;
-      const le = countLE(asc, v);
-      if (lineDrag === 'top') {
-        topPct = Math.max(0, Math.min(100 - botPct, (asc.length - le) / asc.length * 100));
-      } else {
-        botPct = Math.max(0, Math.min(100 - topPct, le / asc.length * 100));
-      }
-      requestAnimationFrame(draw);
-      return;
-    }
     if (dragging) {
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
       moved += Math.abs(dx) + Math.abs(dy);
@@ -1101,7 +1060,7 @@
       trendsHover(mx, my, e.clientX, e.clientY);
       return;
     }
-    canvas.style.cursor = pctLineHit(my) ? 'ns-resize' : '';
+    canvas.style.cursor = '';
     const d = nearest(mx, my);
     if (d !== hovered) {
       hovered = d;
@@ -1110,7 +1069,6 @@
     }
   });
   canvas.addEventListener('pointerup', e => {
-    if (lineDrag) { lineDrag = null; return; }
     dragging = false;
     canvas.classList.remove('dragging');
     if (moved < 5 && mode === 'sdist') {
@@ -1164,6 +1122,18 @@
       requestAnimationFrame(draw);
       return;
     }
+    if (e.data.action === 'zoom' && Number.isFinite(Number(e.data.value))) {
+      zoomView(Number(e.data.value));
+      return;
+    }
+    if (e.data.action === 'zoom-reset') {
+      resetZoom();
+      return;
+    }
+    if (e.data.action === 'zoom-level' && Number.isFinite(Number(e.data.value))) {
+      setZoomLevel(Number(e.data.value));
+      return;
+    }
     if (e.data.action === 'subreddit-metric' && ['posts', 'score'].includes(e.data.value)) {
       const input = document.getElementById(e.data.value === 'score' ? 'sdMScore' : 'sdMPosts');
       input.checked = true;
@@ -1189,15 +1159,21 @@
     requestAnimationFrame(draw);
   });
   canvas.addEventListener('wheel', e => {
+    if (isEmbedded) {
+      e.preventDefault();
+      parent.postMessage({
+        type: 'reddit-data-page-scroll',
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        deltaMode: e.deltaMode,
+      }, location.origin === 'null' ? '*' : location.origin);
+      return;
+    }
     e.preventDefault();
     const r = canvas.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
     const f = Math.pow(1.0015, -e.deltaY);
-    view.kx *= f; view.ky *= f;
-    view.tx = mx - (mx - view.tx) * f;
-    view.ty = my - (my - view.ty) * f;
-    requestAnimationFrame(draw);
-    publishTimelineView();
+    zoomView(f, mx, my);
   }, { passive: false });
 
   // draggable divider between chart and detail panel
@@ -1355,12 +1331,12 @@
     document.getElementById('sdistRadios').style.display = m === 'sdist' ? '' : 'none';
     document.getElementById('tab3dSub').style.display = m === 'sdist' ? '' : 'none';
     document.getElementById('hint').textContent = m === 'sdist'
-      ? 'scroll to zoom · drag to pan · hover for details · click a band to pin'
+      ? 'drag to pan · hover for details · click a band to pin'
       : m === 'trends'
-        ? 'scroll to zoom · drag to pan · hover for weekly details'
+        ? 'drag to pan · hover for weekly details'
         : m === 'dist' || m === 'ldist'
-          ? 'scroll to zoom · drag to pan · hover for post details'
-          : 'scroll to zoom · drag to pan · click a dot to pin';
+          ? 'drag to pan · hover for post details'
+          : 'drag to pan · click a dot to pin';
     updateSmoothRow();
     toggleLabel();
     computeBase();
@@ -1412,9 +1388,7 @@
   window.addEventListener('resize', resize);
   if ('ResizeObserver' in window) new ResizeObserver(resize).observe(wrap);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); draw(); });
-  const params = new URLSearchParams(location.search);
-  if (params.get('embed') === '1') {
-    document.body.classList.add('embed');
+  if (isEmbedded) {
     document.getElementById('tab3d').target = '_top';
     document.getElementById('tab3dSub').target = '_top';
   }

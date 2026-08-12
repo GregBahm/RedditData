@@ -65,8 +65,15 @@
     padding-right: 16px;
     color: var(--secondary);
     font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
   }
-  .panel-controls[hidden] { display: none; }
+  .section:hover .panel-controls,
+  .section:focus-within .panel-controls {
+    opacity: 1;
+    pointer-events: auto;
+  }
   .panel-controls label {
     display: inline-flex;
     align-items: center;
@@ -74,6 +81,26 @@
     white-space: nowrap;
   }
   .panel-controls input { margin: 0; accent-color: var(--accent); }
+  .zoom-slider {
+    position: absolute;
+    z-index: 19;
+    top: 76px;
+    right: 8px;
+    width: 20px;
+    height: 170px;
+    margin: 0;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    accent-color: var(--accent);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+  .section:hover .zoom-slider,
+  .section:focus-within .zoom-slider {
+    opacity: 1;
+    pointer-events: auto;
+  }
   .control {
     padding: 4px 10px;
     background: var(--surface);
@@ -91,7 +118,6 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    padding-right: 16px;
     color: var(--secondary);
     font-size: 13px;
   }
@@ -102,46 +128,27 @@
   #smoothVal { min-width: 52px; }
   main {
     display: grid;
-    gap: 14px;
-    padding: 18px 20px 28px;
+    gap: 0;
+    padding: 0;
   }
   .section {
+    position: relative;
     overflow: hidden;
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
   }
   .section-heading {
     display: flex;
     align-items: center;
-    gap: 12px;
     width: 100%;
+    margin: 0;
     padding: 12px 16px;
-    border: 0;
-    background: transparent;
     color: var(--text);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
+    font-size: 16px;
+    font-weight: 650;
   }
-  .section-heading:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
-  .section-heading strong { font-size: 16px; }
-  .section-heading span {
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .section-heading::before {
-    content: "▾";
-    width: 14px;
-    color: var(--muted);
-    transition: transform 120ms ease;
-  }
-  .section-heading[aria-expanded="false"]::before { transform: rotate(-90deg); }
   .section-body {
     height: var(--section-height);
-    border-top: 1px solid var(--border);
   }
-  .section-body[hidden] { display: none; }
   .section-resizer {
     height: 10px;
     display: flex;
@@ -162,7 +169,6 @@
   .section-resizer.dragging::after {
     opacity: 0.9;
   }
-  .section-resizer[hidden] { display: none; }
   iframe {
     display: block;
     width: 100%;
@@ -208,11 +214,15 @@
   @media (max-width: 680px) {
     .page-header { align-items: flex-start; flex-wrap: wrap; }
     .section-header { align-items: stretch; flex-direction: column; }
-    .panel-controls { width: 100%; padding: 0 16px 12px 42px; flex-wrap: wrap; }
+    .panel-controls { width: 100%; padding: 0 16px 10px; flex-wrap: wrap; }
     .smoothing { padding-right: 0; }
     .smoothing input { flex: 1; width: auto; }
-    main { padding-inline: 10px; }
-    .section-heading span { display: none; }
+  }
+  @media (hover: none) {
+    .panel-controls:focus-within {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 </style>
 <link rel="stylesheet" href="import/import.css">
@@ -229,15 +239,14 @@
 <main>
   <section class="section">
     <div class="section-header">
-      <button class="section-heading" type="button" aria-expanded="true" aria-controls="posts"
-          title="Posting activity over time">
-        <strong>Posts</strong>
-      </button>
-      <div class="panel-controls" data-controls-for="posts">
+      <h2 class="section-heading" title="Posting activity over time">Posts</h2>
+      <div class="panel-controls" data-controls-for="posts" aria-label="Posts controls">
         <button class="control scale-control" type="button" data-frame="Posts" data-axis="Score" data-log="true">Score: log</button>
         <a class="control" href="Posts3dView.html" title="GPU-intensive 3D view">3D View</a>
       </div>
     </div>
+    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
+        data-frame="Posts" aria-label="Posts zoom">
     <div class="section-body" id="posts" data-default-half style="--section-height: 50vh">
       <iframe title="Posts" src="chart.html?embed=1&amp;view=time" loading="eager"></iframe>
     </div>
@@ -246,11 +255,8 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <button class="section-heading" type="button" aria-expanded="true" aria-controls="subreddits"
-          title="Subreddit activity over time">
-        <strong>Subreddit Distribution</strong>
-      </button>
-      <div class="panel-controls" data-controls-for="subreddits">
+      <h2 class="section-heading" title="Subreddit activity over time">Subreddit Distribution</h2>
+      <div class="panel-controls" data-controls-for="subreddits" aria-label="Subreddit Distribution controls">
         <label><input type="radio" name="subredditMetric" value="posts" checked>Posts</label>
         <label><input type="radio" name="subredditMetric" value="score">Score</label>
         <label><input type="checkbox" id="subredditNormalized">normalized</label>
@@ -262,6 +268,8 @@
         <a class="control" href="SubredditDistribution3dView.html" title="GPU-intensive 3D view">3D View</a>
       </div>
     </div>
+    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
+        data-frame="Subreddit Distribution" aria-label="Subreddit Distribution zoom">
     <div class="section-body" id="subreddits" data-default-half style="--section-height: 50vh">
       <iframe title="Subreddit Distribution" src="chart.html?embed=1&amp;view=sdist" loading="eager"></iframe>
     </div>
@@ -269,10 +277,11 @@
         aria-label="Resize Subreddit Distribution section" title="Drag to resize"></div>
   </section>
   <section class="section">
-    <button class="section-heading" type="button" aria-expanded="true" aria-controls="trends"
-        title="Weekly posting and score metrics">
-      <strong>Trends</strong>
-    </button>
+    <div class="section-header">
+      <h2 class="section-heading" title="Weekly posting and score metrics">Trends</h2>
+    </div>
+    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
+        data-frame="Trends" aria-label="Trends zoom">
     <div class="section-body" id="trends" style="--section-height: 720px">
       <iframe title="Trends" src="chart.html?embed=1&amp;view=trends" loading="eager"></iframe>
     </div>
@@ -281,14 +290,13 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <button class="section-heading" type="button" aria-expanded="true" aria-controls="scores"
-          title="Posts ranked by score">
-        <strong>Score Distribution</strong>
-      </button>
-      <div class="panel-controls" data-controls-for="scores">
+      <h2 class="section-heading" title="Posts ranked by score">Score Distribution</h2>
+      <div class="panel-controls" data-controls-for="scores" aria-label="Score Distribution controls">
         <button class="control scale-control" type="button" data-frame="Score Distribution" data-axis="Score" data-log="true">Score: log</button>
       </div>
     </div>
+    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
+        data-frame="Score Distribution" aria-label="Score Distribution zoom">
     <div class="section-body" id="scores" style="--section-height: 620px">
       <iframe title="Score Distribution" src="chart.html?embed=1&amp;view=dist" loading="eager"></iframe>
     </div>
@@ -297,14 +305,13 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <button class="section-heading" type="button" aria-expanded="true" aria-controls="lengths"
-          title="Posts ranked by text length">
-        <strong>Post Length Distribution</strong>
-      </button>
-      <div class="panel-controls" data-controls-for="lengths">
+      <h2 class="section-heading" title="Posts ranked by text length">Post Length Distribution</h2>
+      <div class="panel-controls" data-controls-for="lengths" aria-label="Post Length Distribution controls">
         <button class="control scale-control" type="button" data-frame="Post Length Distribution" data-axis="Length" data-log="true">Length: log</button>
       </div>
     </div>
+    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
+        data-frame="Post Length Distribution" aria-label="Post Length Distribution zoom">
     <div class="section-body" id="lengths" style="--section-height: 620px">
       <iframe title="Post Length Distribution" src="chart.html?embed=1&amp;view=ldist" loading="eager"></iframe>
     </div>
@@ -409,6 +416,19 @@
       sendControl(button.dataset.frame, 'scale', useLog);
     });
   }
+  const timelineTitles = new Set(['Posts', 'Subreddit Distribution', 'Trends']);
+  for (const slider of document.querySelectorAll('.zoom-slider')) {
+    slider.addEventListener('input', () => {
+      const titles = timelineTitles.has(slider.dataset.frame)
+        ? timelineTitles
+        : [slider.dataset.frame];
+      for (const title of titles) {
+        const linkedSlider = document.querySelector(`.zoom-slider[data-frame="${title}"]`);
+        if (linkedSlider && linkedSlider !== slider) linkedSlider.value = slider.value;
+        sendControl(title, 'zoom-level', Number(slider.value));
+      }
+    });
+  }
 
   function addText(parent, tag, className, text) {
     const node = document.createElement(tag);
@@ -419,6 +439,12 @@
 
   window.addEventListener('message', e => {
     if (e.origin !== location.origin) return;
+    if (e.data?.type === 'reddit-data-page-scroll' &&
+        frames.some(frame => frame.contentWindow === e.source)) {
+      const unit = e.data.deltaMode === 1 ? 16 : e.data.deltaMode === 2 ? window.innerHeight : 1;
+      window.scrollBy(e.data.deltaX * unit, e.data.deltaY * unit);
+      return;
+    }
     if (e.data?.type === 'reddit-data-timeline-view' &&
         timelineFrames.some(frame => frame.contentWindow === e.source)) {
       for (const frame of timelineFrames) {
@@ -471,18 +497,6 @@
       postDetail.append(note);
     }
   });
-
-  for (const button of document.querySelectorAll('.section-heading')) {
-    button.addEventListener('click', () => {
-      const expanded = button.getAttribute('aria-expanded') === 'true';
-      button.setAttribute('aria-expanded', String(!expanded));
-      const sectionId = button.getAttribute('aria-controls');
-      document.getElementById(sectionId).hidden = expanded;
-      const controls = document.querySelector(`[data-controls-for="${sectionId}"]`);
-      if (controls) controls.hidden = expanded;
-      document.querySelector(`[data-resizer-for="${sectionId}"]`).hidden = expanded;
-    });
-  }
 
   function setDefaultHalfHeights() {
     for (const body of document.querySelectorAll('[data-default-half]')) {
