@@ -10,9 +10,21 @@
   body { background: #f9f9f7; font-family: system-ui, sans-serif; }
   #gl { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
   #hint {
-    position: fixed; top: 10px; right: 14px;
+    position: fixed; right: 14px; bottom: 10px;
     font-size: 12px; color: #898781; pointer-events: none;
   }
+  #back2d {
+    position: fixed; top: 10px; left: 14px;
+    z-index: 6;
+    padding: 4px 10px;
+    color: #52514e;
+    background: rgba(252, 252, 251, 0.92);
+    border: 1px solid rgba(11, 11, 11, 0.15);
+    border-radius: 6px;
+    font-size: 12px;
+    text-decoration: none;
+  }
+  #back2d:hover { border-color: rgba(11, 11, 11, 0.4); }
   #panel {
     position: fixed; left: 14px; bottom: 14px;
     background: rgba(252, 252, 251, 0.92);
@@ -48,6 +60,7 @@
   .prow { display: flex; align-items: center; gap: 8px; }
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
+  .prow output { width: 30px; text-align: right; }
   .prow input[type=color] {
     width: 28px; height: 18px; padding: 0;
     border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
@@ -55,33 +68,60 @@
   #pick {
     position: fixed; display: none;
     transform: translate(-50%, -100%);
-    background: var(--pick-bg, #fcfcfb);
-    border: 1px solid rgba(128, 128, 128, 0.4);
+    background: color-mix(in srgb, var(--pick-bg, #212121) 62%, transparent);
+    border: 1px solid rgba(0, 0, 0, 0.46);
     border-radius: 8px;
     padding: 10px 12px;
-    font-size: 13px; line-height: 1.4;
+    font-size: 11.5px; line-height: 1.35;
     color: var(--pick-tx, #2a2a28);
     max-width: 380px;
+    backdrop-filter: blur(14px) saturate(1.3);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 8px 28px rgba(0, 0, 0, 0.2);
     pointer-events: none;
     z-index: 5;
   }
-  #pick .score { font-weight: 600; font-size: 16px; margin-right: 8px; }
+  #pick .score { font-weight: 600; font-size: 14px; margin-right: 8px; }
   #pick .meta { opacity: 0.8; margin-bottom: 4px; }
   #pick .title { font-weight: 600; margin-bottom: 2px; }
   #pick .thread { font-weight: 600; opacity: 0.8; margin-bottom: 2px; }
   #pick .body {
     opacity: 0.8;
-    max-height: 120px; overflow: hidden;
-    white-space: pre-wrap; overflow-wrap: break-word;
+    max-height: 160px; overflow: auto;
+    overflow-wrap: break-word;
   }
-  #pick .note { font-size: 12px; opacity: 0.65; margin-top: 6px; }
+  #pick .body p { margin: 0 0 5px; }
+  #pick .body p:last-child { margin-bottom: 0; }
+  #pick .body h1, #pick .body h2, #pick .body h3 {
+    margin: 6px 0 3px;
+    font-size: 1.08em;
+  }
+  #pick .body ul, #pick .body ol { margin: 3px 0; padding-left: 20px; }
+  #pick .body blockquote { margin: 4px 0; padding-left: 8px; border-left: 2px solid currentColor; opacity: 0.8; }
+  #pick .body code { padding: 1px 3px; border-radius: 3px; background: rgba(127, 127, 127, 0.2); }
+  #pick .body pre { margin: 4px 0; padding: 6px; overflow: auto; border-radius: 4px; background: rgba(0, 0, 0, 0.28); }
+  #pick .body pre code { padding: 0; background: none; }
+  #pick .media { margin-top: 7px; min-height: 1em; font-size: 10.5px; opacity: 0.75; }
+  #pick .media img, #pick .media video {
+    display: block;
+    max-width: 100%;
+    max-height: 260px;
+    margin: 0 auto;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.24);
+  }
+  #pick .note { font-size: 10.5px; opacity: 0.65; margin-top: 6px; }
   #pick a { color: #2a78d6; text-decoration: none; }
   #pick a:hover { text-decoration: underline; }
   #recBar {
-    position: fixed; top: 10px; left: 14px;
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;
+    padding-top: 8px;
+    margin-top: 2px;
+    border-top: 1px solid rgba(11, 11, 11, 0.1);
     font-size: 12px; color: #898781;
-    z-index: 6;
   }
   #recBar button {
     font: inherit;
@@ -99,24 +139,18 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
-<div id="recBar">
-  <button id="recBtn">⏺ record sequence</button>
-  <button id="kfBtn" style="display:none">✚ keyframe</button>
-  <button id="clearBtn" style="display:none">clear</button>
-  <button id="prevBtn" style="display:none">▶ preview</button>
-  <button id="bakeBtn" style="display:none">bake</button>
-  <span id="recInfo"></span>
-</div>
+<a id="back2d" href="index.html">2D View</a>
+<div id="hint">rendering 0%</div>
 <div id="pick"></div>
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
   <div id="panelBody">
     <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="25"></div>
     <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="73"></div>
+    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="32"></div>
     <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#cfbaaf"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="13"></div>
     <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#4977a2"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="2.1"></div>
-    <div class="prow"><span>spheres</span><input type="color" id="cSph" value="#ff9500"></div>
+    <div class="prow"><span>items color</span><input type="range" id="cSph" min="0" max="10" step="0.05" value="1"><output id="cSphVal">1×</output></div>
     <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#ffffff"></div>
     <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#ffffff"></div>
     <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#383838"></div>
@@ -133,6 +167,14 @@
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
       <button id="tunDel" title="Delete the selected tuning">delete</button>
+    </div>
+    <div id="recBar">
+      <button id="recBtn">⏺ Record Sequence</button>
+      <button id="kfBtn" style="display:none">✚ keyframe</button>
+      <button id="clearBtn" style="display:none">clear</button>
+      <button id="prevBtn" style="display:none">▶ preview</button>
+      <button id="bakeBtn" style="display:none">bake</button>
+      <span id="recInfo"></span>
     </div>
   </div>
 </div>
@@ -161,18 +203,26 @@
   const CELL = 2 * R;     // stacking bin and trace-grid cell size
   const kx0 = (W0 - 80) / 2000, ky0 = (H0 - 80) / 1000;
   const px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
+  const stackCounts = new Map();
   {
-    const bins = new Map();
     for (let i = 0; i < N; i++) {
       const sx = 40 + kx0 * ((items[i].time - t0) / (t1 - t0) * 2000);
       const sy = 40 + ky0 * ((ymax - ys[i]) / (ymax - ymin) * 1000);
       px[i] = sx - W0 / 2;
       py[i] = H0 / 2 - sy;            // y up
-      const key = Math.round(px[i] / CELL) * 1048576 + Math.round(py[i] / CELL);
-      const n = bins.get(key) || 0;
+      const stackKey = Math.round(px[i] / CELL) * 1048576 + Math.round(py[i] / CELL);
+      const n = stackCounts.get(stackKey) || 0;
       pz[i] = R + n * 2 * R;          // stack toward the viewer, resting on the wall
-      bins.set(key, n + 1);
+      stackCounts.set(stackKey, n + 1);
     }
+  }
+
+  const HEAT_STOPS = [[137, 135, 129], [42, 120, 214], [139, 58, 199], [227, 61, 61], [245, 211, 39]];
+  function heatRgb(t) {
+    const x = Math.min(0.9999, Math.max(0, t)) * (HEAT_STOPS.length - 1);
+    const i = Math.floor(x), f = x - i;
+    const a = HEAT_STOPS[i], b = HEAT_STOPS[i + 1];
+    return [0, 1, 2].map(k => (a[k] + (b[k] - a[k]) * f) / 255);
   }
 
   // perspective eye distance: comfortably beyond the tallest tower
@@ -219,9 +269,19 @@
   idxData.set(idxList);
   const POS_W = 128, POS_H = Math.ceil(N / POS_W);
   const posData = new Float32Array(POS_W * POS_H * 4);
+  const colorData = new Float32Array(POS_W * POS_H * 4);
+  const maxStackLevel = 1 + (maxPz - R) / (2 * R);
+  const logMaxStackLevel = Math.log(Math.max(2, maxStackLevel));
   for (let i = 0; i < N; i++) {
     posData[i * 4] = px[i]; posData[i * 4 + 1] = py[i]; posData[i * 4 + 2] = pz[i];
     posData[i * 4 + 3] = items[i].post ? 1 : 0;   // posts render as cubes
+    const stackLevel = 1 + (pz[i] - R) / (2 * R);
+    const t = Math.log(stackLevel) / logMaxStackLevel;
+    const rgb = heatRgb(t);
+    colorData[i * 4] = Math.pow(rgb[0], 2.2);
+    colorData[i * 4 + 1] = Math.pow(rgb[1], 2.2);
+    colorData[i * 4 + 2] = Math.pow(rgb[2], 2.2);
+    colorData[i * 4 + 3] = 1;
   }
 
   // ---- gl ----
@@ -243,6 +303,7 @@
   precision highp int;
   precision highp usampler2D;
   uniform sampler2D uPos;
+  uniform sampler2D uColor;
   uniform usampler2D uGrid;
   uniform usampler2D uIdx;
   uniform sampler2D uPrev;
@@ -257,14 +318,14 @@
 
   const float R = ${R.toFixed(1)};
   const float CELL = ${CELL.toFixed(1)};
-  const float SUN_COSMAX = 0.9992;   // ~2.3 degree angular radius
   const float PI = 3.14159265;
   uniform vec3 uSunDir;              // toward the sun
   uniform vec3 uSunE;                // sun color * intensity (irradiance)
+  uniform float uSunCos;             // cosine of the sun's angular radius
   uniform vec3 uSkyL;                // dome color * intensity (radiance)
   uniform vec3 uAlbW;                // canvas-rectangle albedo
   uniform vec3 uAlbB;                // wall albedo outside the rectangle
-  uniform vec3 uAlbS;                // sphere albedo
+  uniform float uSphBrightness;      // multiplier for each item's base density color
   uniform vec3 uAlbL;                // label ink albedo
   uniform vec4 uRect;                // canvas rectangle: min x, min y, max x, max y
   uniform sampler2D uLblTex;         // label ink mask, painted on the wall
@@ -283,6 +344,7 @@
   float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
 
   vec4 itemData(int i) { return texelFetch(uPos, ivec2(i % ${POS_W}, i / ${POS_W}), 0); }
+  vec3 itemColor(int i) { return texelFetch(uColor, ivec2(i % ${POS_W}, i / ${POS_W}), 0).rgb; }
   vec3 spherePos(int i) { return itemData(i).xyz; }
   uint idxAt(int i) { return texelFetch(uIdx, ivec2(i % ${IDX_W}, i / ${IDX_W}), 0).r; }
 
@@ -378,7 +440,7 @@
   }
   vec3 coneDir(vec3 dir, inout uint s) {
     float r1 = rnd(s), r2 = rnd(s);
-    float ct = mix(SUN_COSMAX, 1.0, r1);
+    float ct = mix(uSunCos, 1.0, r1);
     float st = sqrt(max(0.0, 1.0 - ct * ct)), ph = 6.2831853 * r2;
     vec3 t = onbT(dir), b = cross(dir, t);
     return normalize(t * (st * cos(ph)) + b * (st * sin(ph)) + dir * ct);
@@ -459,7 +521,7 @@
           alb = mix(alb, uAlbL, ink);
         }
       } else {
-        alb = uAlbS;
+        alb = itemColor(int(h.y)) * uSphBrightness;
       }
       tp *= alb;
       vec3 sd = coneDir(uSunDir, seed);
@@ -515,6 +577,7 @@
     return t;
   };
   const texPos = mkTex(POS_W, POS_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, posData);
+  const texColor = mkTex(POS_W, POS_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, colorData);
   const texGrid = mkTex(GW, GH, gl.RG32UI, gl.RG_INTEGER, gl.UNSIGNED_INT, gridData);
   const texIdx = mkTex(IDX_W, IDX_H, gl.R32UI, gl.RED_INTEGER, gl.UNSIGNED_INT, idxData);
 
@@ -550,19 +613,22 @@
     }
     return { k, f };
   }
-  const MAX_SPP = 1500;
+  const MAX_SPP = 500;
   const hint = document.getElementById('hint');
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cKfSec']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cKfSec']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
   const setV = (el, v) => { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
   try {
     const saved = JSON.parse(localStorage.getItem('pt-light') || 'null');
-    if (saved) for (const id in ctl) if (saved[id] !== undefined) setV(ctl[id], saved[id]);
+    if (saved) for (const id in ctl) {
+      if (saved[id] === undefined) continue;
+      setV(ctl[id], id === 'cSph' && String(saved[id]).startsWith('#') ? 1 : saved[id]);
+    }
   } catch (e) {}
   const saveLight = () => {
     const vals = {};
@@ -570,13 +636,16 @@
     localStorage.setItem('pt-light', JSON.stringify(vals));
   };
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
-  const light = { sunDir: [0, 0, 1], sunE: [0, 0, 0], skyL: [0, 0, 0], albW: [0, 0, 0], albS: [0, 0, 0] };
+  const light = { sunDir: [0, 0, 1], sunE: [0, 0, 0], skyL: [0, 0, 0], albW: [0, 0, 0], sphBrightness: 1 };
   function readLight() {
     const az = +ctl.cAz.value * Math.PI / 180, el = +ctl.cEl.value * Math.PI / 180;
     light.sunDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
     light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
+    const halfAngle = 15 * Math.pow(0.003, +ctl.cSharp.value / 100) * Math.PI / 180;
+    light.sunCos = Math.cos(halfAngle);
     light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
-    light.albS = hex2lin(ctl.cSph.value);
+    light.sphBrightness = +ctl.cSph.value;
+    document.getElementById('cSphVal').textContent = light.sphBrightness.toFixed(light.sphBrightness % 1 ? 2 : 0) + '×';
     light.albW = hex2lin(ctl.cWall.value);
     light.albB = hex2lin(ctl.cBack.value);
     light.albL = hex2lin(ctl.cLbl.value);
@@ -613,6 +682,7 @@
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, texIdx); gl.uniform1i(U('uIdx'), 2);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, accTex[1 - flip]); gl.uniform1i(U('uPrev'), 3);
     gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, texLbl); gl.uniform1i(U('uLblTex'), 4);
+    gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, texColor); gl.uniform1i(U('uColor'), 5);
     gl.uniform4f(U('uLblRect'), lblMinX, lblMinY, lblMaxX - lblMinX, lblMaxY - lblMinY);
     gl.uniform3fv(U('uAlbL'), light.albL);
     gl.uniform2f(U('uGridMin'), gminX, gminY);
@@ -624,10 +694,11 @@
     gl.uniform1f(U('uFrame'), frame);
     gl.uniform3fv(U('uSunDir'), light.sunDir);
     gl.uniform3fv(U('uSunE'), light.sunE);
+    gl.uniform1f(U('uSunCos'), light.sunCos);
     gl.uniform3fv(U('uSkyL'), light.skyL);
     gl.uniform3fv(U('uAlbW'), light.albW);
     gl.uniform3fv(U('uAlbB'), light.albB);
-    gl.uniform3fv(U('uAlbS'), light.albS);
+    gl.uniform1f(U('uSphBrightness'), light.sphBrightness);
     gl.uniform4f(U('uRect'), wxOf(0), wyOf(1000), wxOf(2000), wyOf(0));
     // post mode: DoF only while an item is shown, focused on it under the hood
     const dof = ovState ? { k: ovState.dofK, f: ovState.focusZ } : resolveDof();
@@ -666,7 +737,7 @@
     if (!exporting && frame < MAX_SPP) {
       renderSample();
       if (frame % 10 === 0 || frame < 10) {
-        hint.textContent = `path tracing · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
+        hint.textContent = `rendering ${Math.min(100, Math.round(frame / MAX_SPP * 100))}%`;
       }
     }
     requestAnimationFrame(loop);
@@ -733,7 +804,9 @@
     localStorage.setItem('pt-tuning-sel', tunSel.value);
     const t = tunings.find(x => x.name === tunSel.value);
     if (!t) return;
-    for (const id in ctl) if (t.vals[id] !== undefined) setV(ctl[id], t.vals[id]);
+    for (const id in ctl) if (t.vals[id] !== undefined) {
+      setV(ctl[id], id === 'cSph' && String(t.vals[id]).startsWith('#') ? 1 : t.vals[id]);
+    }
     readLight();
     saveLight();
     reset();
@@ -876,6 +949,197 @@
     if (text !== undefined) s.textContent = text;
     return s;
   };
+  function safeHref(raw) {
+    try {
+      const url = new URL(raw, location.href);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function appendMarkdownInline(parent, text) {
+    const token = /(\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\*([^*\n]+)\*|_([^_\n]+)_|https?:\/\/[^\s<]+)/g;
+    let at = 0, match;
+    while ((match = token.exec(text))) {
+      if (match.index > at) parent.append(document.createTextNode(text.slice(at, match.index)));
+      if (match[2] !== undefined) {
+        const href = safeHref(match[3]);
+        if (href) {
+          const a = el2('a', null, match[2]);
+          a.href = href; a.target = '_blank'; a.rel = 'noopener';
+          parent.append(a);
+        } else {
+          parent.append(document.createTextNode(match[0]));
+        }
+      } else if (match[4] !== undefined || match[5] !== undefined) {
+        const strong = document.createElement('strong');
+        appendMarkdownInline(strong, match[4] ?? match[5]);
+        parent.append(strong);
+      } else if (match[6] !== undefined) {
+        parent.append(el2('code', null, match[6]));
+      } else if (match[7] !== undefined || match[8] !== undefined) {
+        const em = document.createElement('em');
+        appendMarkdownInline(em, match[7] ?? match[8]);
+        parent.append(em);
+      } else {
+        const href = safeHref(match[0]);
+        const a = el2('a', null, match[0]);
+        a.href = href; a.target = '_blank'; a.rel = 'noopener';
+        parent.append(a);
+      }
+      at = token.lastIndex;
+    }
+    if (at < text.length) parent.append(document.createTextNode(text.slice(at)));
+  }
+  function renderMarkdown(text) {
+    const root = el2('div', 'body');
+    const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    let paragraph = [], list = null, code = null;
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
+      const p = document.createElement('p');
+      appendMarkdownInline(p, paragraph.join(' '));
+      root.append(p);
+      paragraph = [];
+    };
+    const endList = () => { list = null; };
+    for (const line of lines) {
+      if (code) {
+        if (/^```/.test(line)) {
+          const pre = document.createElement('pre');
+          pre.append(el2('code', null, code.join('\n')));
+          root.append(pre);
+          code = null;
+        } else {
+          code.push(line);
+        }
+        continue;
+      }
+      if (/^```/.test(line)) {
+        flushParagraph(); endList(); code = [];
+        continue;
+      }
+      if (!line.trim()) {
+        flushParagraph(); endList();
+        continue;
+      }
+      const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+      if (heading) {
+        flushParagraph(); endList();
+        const h = document.createElement('h' + heading[1].length);
+        appendMarkdownInline(h, heading[2]);
+        root.append(h);
+        continue;
+      }
+      const quote = /^>\s?(.*)$/.exec(line);
+      if (quote) {
+        flushParagraph(); endList();
+        const bq = document.createElement('blockquote');
+        appendMarkdownInline(bq, quote[1]);
+        root.append(bq);
+        continue;
+      }
+      const bullet = /^\s*[-+*]\s+(.+)$/.exec(line);
+      const numbered = /^\s*\d+\.\s+(.+)$/.exec(line);
+      if (bullet || numbered) {
+        flushParagraph();
+        const tag = bullet ? 'ul' : 'ol';
+        if (!list || list.tagName.toLowerCase() !== tag) {
+          list = document.createElement(tag);
+          root.append(list);
+        }
+        const li = document.createElement('li');
+        appendMarkdownInline(li, (bullet || numbered)[1]);
+        list.append(li);
+        continue;
+      }
+      endList();
+      paragraph.push(line.trim());
+    }
+    flushParagraph();
+    if (code) {
+      const pre = document.createElement('pre');
+      pre.append(el2('code', null, code.join('\n')));
+      root.append(pre);
+    }
+    return root;
+  }
+
+  const mediaCache = new Map();
+  function archivedPost(id) {
+    if (!mediaCache.has(id)) {
+      const url = 'https://arctic-shift.photon-reddit.com/api/posts/ids?ids=' + encodeURIComponent(id);
+      mediaCache.set(id, fetch(url).then(r => {
+        if (!r.ok) throw new Error('media lookup failed');
+        return r.json();
+      }).then(result => result.data?.[0] || null).catch(() => null));
+    }
+    return mediaCache.get(id);
+  }
+  function mediaSources(post) {
+    const direct = safeHref(post?.url);
+    const redditVideo = safeHref(post?.secure_media?.reddit_video?.fallback_url ||
+      post?.media?.reddit_video?.fallback_url);
+    const previewVideo = safeHref(post?.preview?.images?.[0]?.variants?.mp4?.source?.url);
+    const previewImage = safeHref(post?.preview?.images?.[0]?.variants?.gif?.source?.url ||
+      post?.preview?.images?.[0]?.source?.url);
+    const thumbnail = safeHref(post?.thumbnail);
+    const out = [];
+    const add = (type, url) => {
+      if (url && !out.some(source => source.url === url)) out.push({ type, url });
+    };
+    add('video', redditVideo);
+    add('video', previewVideo);
+    if (direct && /\.(?:mp4|webm)(?:$|[?#])/i.test(direct)) add('video', direct);
+    if (direct && /\.(?:avif|gif|jpe?g|png|webp)(?:$|[?#])/i.test(direct)) add('image', direct);
+    if (post?.post_hint === 'image') add('image', direct);
+    add('image', previewImage);
+    if (thumbnail && !/\/(?:default|self|spoiler|nsfw)\.(?:png|jpg)$/i.test(thumbnail)) add('image', thumbnail);
+    return out;
+  }
+  async function appendMedia(container, d, itemId, pinned) {
+    container.textContent = 'loading media…';
+    const post = await archivedPost(d.id);
+    if (pickPanel._for !== itemId) return;
+    const sources = mediaSources(post);
+    const thumbnail = safeHref(post?.thumbnail);
+    if (thumbnail && !/\/(?:default|self|spoiler|nsfw)\.(?:png|jpg)$/i.test(thumbnail)) {
+      const preview = document.createElement('img');
+      preview.src = thumbnail;
+      preview.alt = d.title || 'Post media preview';
+      container.replaceChildren(preview);
+    }
+    for (const source of sources) {
+      if (pickPanel._for !== itemId) return;
+      const media = await new Promise(resolve => {
+        if (source.type === 'video') {
+          const video = document.createElement('video');
+          video.autoplay = true;
+          video.loop = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.controls = pinned;
+          video.addEventListener('loadeddata', () => resolve(video), { once: true });
+          video.addEventListener('error', () => resolve(null), { once: true });
+          video.src = source.url;
+          video.load();
+        } else {
+          const image = document.createElement('img');
+          image.alt = d.title || 'Post media';
+          image.addEventListener('load', () => resolve(image), { once: true });
+          image.addEventListener('error', () => resolve(null), { once: true });
+          image.src = source.url;
+        }
+      });
+      if (media) {
+        if (pickPanel._for !== itemId) return;
+        container.replaceChildren(media);
+        container.style.opacity = '1';
+        return;
+      }
+    }
+    container.textContent = sources.length ? 'media is no longer available' : '';
+  }
   function fillPick(i, pinned) {
     const d = items[i].src;
     pickPanel.replaceChildren();
@@ -887,7 +1151,13 @@
     pickPanel.append(meta);
     if (d.title) pickPanel.append(el2('div', 'title', d.title));
     if (d.thread) pickPanel.append(el2('div', 'thread', 'in: ' + d.thread));
-    pickPanel.append(el2('div', 'body', d.body || (d.type === 'post' ? '(link post — no text)' : '(no text)')));
+    if (d.body) pickPanel.append(renderMarkdown(d.body));
+    else if (d.type !== 'post') pickPanel.append(el2('div', 'body', '(no text)'));
+    if (d.type === 'post' && d.id) {
+      const media = el2('div', 'media');
+      pickPanel.append(media);
+      appendMedia(media, d, i, pinned);
+    }
     if (pinned) {
       const note = el2('div', 'note');
       const a = el2('a', null, 'open on reddit ↗');
@@ -1014,7 +1284,7 @@
     }
     recBtn.classList.toggle('on', recording);
     show(recBtn, true);
-    recBtn.textContent = recording ? '⏹ stop' : '⏺ record sequence';
+    recBtn.textContent = recording ? '⏹ stop' : '⏺ Record Sequence';
     show(kfBtn, recording);
     if (recording) kfBtn.textContent = `✚ keyframe (${seq.length})`;
     show(clearBtn, !recording && seq.length > 0);

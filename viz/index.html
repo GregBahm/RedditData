@@ -87,11 +87,6 @@
     cursor: pointer;
   }
   .control:hover { border-color: var(--muted); }
-  a.control.accent {
-    border-color: transparent;
-    background: var(--accent);
-    color: #fff;
-  }
   .smoothing {
     display: flex;
     align-items: center;
@@ -233,10 +228,8 @@
         <strong>Posts</strong>
       </button>
       <div class="panel-controls" data-controls-for="posts">
-        <label><input type="radio" name="postsMetric" value="time" checked>Score</label>
-        <label><input type="radio" name="postsMetric" value="ltime">Length</label>
         <button class="control scale-control" type="button" data-frame="Posts" data-axis="Score" data-log="true">Score: log</button>
-        <a class="control accent" href="experiment.html">In fabulous 3D</a>
+        <a class="control" href="Posts3dView.html" title="GPU-intensive 3D view">3D View</a>
       </div>
     </div>
     <div class="section-body" id="posts" data-default-half style="--section-height: 50vh">
@@ -260,7 +253,7 @@
           <input type="range" id="smoothSlider" min="0" max="100" value="54">
           <span id="smoothVal">~30 wk</span>
         </label>
-        <a class="control accent" href="subreddits3d.html">In fabulous 3D</a>
+        <a class="control" href="SubredditDistribution3dView.html" title="GPU-intensive 3D view">3D View</a>
       </div>
     </div>
     <div class="section-body" id="subreddits" data-default-half style="--section-height: 50vh">
@@ -357,15 +350,6 @@
     }, location.origin === 'null' ? '*' : location.origin);
   }
 
-  for (const radio of document.querySelectorAll('input[name="postsMetric"]')) {
-    radio.addEventListener('change', () => {
-      if (!radio.checked) return;
-      const scale = document.querySelector('.scale-control[data-frame="Posts"]');
-      scale.dataset.axis = radio.value === 'ltime' ? 'Length' : 'Score';
-      scale.textContent = scale.dataset.axis + ': ' + (scale.dataset.log === 'true' ? 'log' : 'linear');
-      sendControl('Posts', 'scatter-mode', radio.value);
-    });
-  }
   for (const radio of document.querySelectorAll('input[name="subredditMetric"]')) {
     radio.addEventListener('change', () => {
       if (radio.checked) sendControl('Subreddit Distribution', 'subreddit-metric', radio.value);

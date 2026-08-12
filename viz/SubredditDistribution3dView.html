@@ -10,9 +10,21 @@
   body { background: #f2f1ee; font-family: system-ui, sans-serif; }
   #gl { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
   #hint {
-    position: fixed; top: 10px; right: 14px;
+    position: fixed; right: 14px; bottom: 10px;
     font-size: 12px; color: #898781; pointer-events: none;
   }
+  #back2d {
+    position: fixed; top: 10px; left: 14px;
+    z-index: 6;
+    padding: 4px 10px;
+    color: #52514e;
+    background: rgba(252, 252, 251, 0.92);
+    border: 1px solid rgba(11, 11, 11, 0.15);
+    border-radius: 6px;
+    font-size: 12px;
+    text-decoration: none;
+  }
+  #back2d:hover { border-color: rgba(11, 11, 11, 0.4); }
   #panel {
     position: fixed; left: 14px; bottom: 14px;
     background: rgba(252, 252, 251, 0.92);
@@ -27,6 +39,8 @@
   #panelHead span { color: #898781; font-weight: 400; }
   #panel.closed #panelBody { display: none; }
   #panelBody { display: grid; gap: 6px; }
+  #dofRows { display: grid; gap: 6px; }
+  #dofRows.off { display: none; }
   .prow { display: flex; align-items: center; gap: 8px; }
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
@@ -54,7 +68,8 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div id="hint">drag to pan · wheel to zoom · right-drag to rotate</div>
+<a id="back2d" href="index.html">2D View</a>
+<div id="hint">rendering 0%</div>
 <div id="panel">
   <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
   <div id="panelBody">
@@ -68,6 +83,11 @@
     <div class="prow"><span>bar scale</span><input type="range" id="cScale" min="5" max="300" value="100"></div>
     <div class="prow"><span>ground</span><input type="color" id="cBack" value="#8f8f8f"></div>
     <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#000000"></div>
+    <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
+    <div id="dofRows" class="off">
+      <div class="prow"><span>focus distance</span><input type="range" id="cFocus" min="100" max="6000" step="10" value="2900"></div>
+      <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.024"></div>
+    </div>
     <div class="prow" id="tunRow">
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
@@ -219,6 +239,8 @@
   uniform vec3 uUp;
   uniform vec3 uFwd;
   uniform float uTanF;
+  uniform float uDofK;
+  uniform float uFocusDist;
   uniform float uFrame;
   uniform vec3 uSunDir;
   uniform vec3 uSunE;
@@ -240,6 +262,7 @@
   const int NC = ${nCols};
   const float PI = 3.14159265;
   const float HMIN = 0.5;   // solid thinner than this is treated as empty
+  const float SLICE_Y = 0.75;
   const vec4 INKR = vec4(${IX0.toFixed(1)}, ${IZB.toFixed(1)}, ${(1 / (IX1 - IX0)).toExponential(6)}, ${(1 / (IZF - IZB)).toExponential(6)});
 
   uint pcg(inout uint s) {
@@ -268,7 +291,8 @@
       float t = -o.y / d.y;
       if (t > eps) { h.t = t; h.kind = 1; }
     }
-    // slice field bounding box: x in [0,CW], y in [0,HMAX], u = -z in [0,TOTU].
+    // slice field bounding box: x in [0,CW], y in [SLICE_Y,SLICE_Y+HMAX],
+    // u = -z in [0,TOTU].
     // Track which axis the ray entered through — a cap face if it lands
     // inside a slice's solid.
     float t0 = eps, t1 = h.t;
@@ -280,11 +304,12 @@
       t1 = min(t1, max(ta, tb));
     } else if (o.x < 0.0 || o.x > CW) return h;
     if (abs(d.y) > 1e-7) {
-      float ta = -o.y / d.y, tb = (HMAX - o.y) / d.y;
+      float ta = (SLICE_Y - o.y) / d.y;
+      float tb = (SLICE_Y + HMAX - o.y) / d.y;
       float lo = min(ta, tb);
       if (lo > t0) { t0 = lo; axisEnter = 1; }
       t1 = min(t1, max(ta, tb));
-    } else if (o.y < 0.0 || o.y > HMAX) return h;
+    } else if (o.y < SLICE_Y || o.y > SLICE_Y + HMAX) return h;
     float uo = -o.z, du = -d.z;
     if (abs(du) > 1e-7) {
       float ta = -uo / du, tb = (TOTU - uo) / du;
@@ -329,20 +354,21 @@
       int k = ir >> 1;
       if ((ir & 1) == 0 && tEnd > tcur) {
         vec3 pa = o + d * tcur;
-        float ga = pa.y - hK(k, pa.x);
+        float ga = pa.y - (SLICE_Y + hK(k, pa.x));
         if (ga <= 0.0 && hK(k, pa.x) > HMIN) {
           // segment starts inside the solid: the ray came in through a flat
-          // cap face (front/back in z, or an end face in x)
+          // cap face
           vec3 n = axisEnter == 0 ? vec3(d.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0)
-                                  : vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
+              : axisEnter == 1 ? vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0)
+                               : vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
           h.t = tcur; h.kind = 3; h.n = n; h.alb = uCols[k];
           return h;
         }
         vec3 pb = o + d * tEnd;
-        float gb = pb.y - hK(k, pb.x);
+        float gb = pb.y - (SLICE_Y + hK(k, pb.x));
         if (ga > 0.0 && gb <= 0.0) {
           float tt = tcur + (tEnd - tcur) * ga / (ga - gb);
-          if (o.y + d.y * tt > HMIN) {
+          if (o.y + d.y * tt > SLICE_Y + HMIN) {
             vec3 ph = o + d * tt;
             float db = (hK(k, min(ph.x + 4.0, CW)) - hK(k, max(ph.x - 4.0, 0.0))) / 8.0;
             vec3 n = normalize(vec3(-db, 1.0, 0.0));
@@ -372,7 +398,9 @@
     float uo = -o.z, du = -d.z;
     float t1 = 1e30;
     if (abs(d.x) > 1e-7) t1 = min(t1, max(-o.x / d.x, (CW - o.x) / d.x));
-    if (abs(d.y) > 1e-7) t1 = min(t1, max(-o.y / d.y, (HMAX - o.y) / d.y));
+    if (abs(d.y) > 1e-7) {
+      t1 = min(t1, max((SLICE_Y - o.y) / d.y, (SLICE_Y + HMAX - o.y) / d.y));
+    }
     if (abs(du) > 1e-7) t1 = min(t1, max(-uo / du, (TOTU - uo) / du));
     float colW = CW / float(NC - 1);
     int ic = clamp(int(floor(o.x / colW)), 0, NC - 2);
@@ -386,7 +414,7 @@
       if ((ir & 1) == 1) return tcur;               // in a gap: outside
       int k = ir >> 1;
       vec3 pa = o + d * tcur;
-      float ga = pa.y - hK(k, pa.x);
+      float ga = pa.y - (SLICE_Y + hK(k, pa.x));
       if (ga > 0.0) return tcur;                    // above the surface
       float x0c = float(ic) * colW;
       float tExitX; int iNext;
@@ -400,7 +428,7 @@
       }
       float tEnd = min(min(tExitX, tExitU), t1);
       vec3 pb = o + d * tEnd;
-      float gb = pb.y - hK(k, pb.x);
+      float gb = pb.y - (SLICE_Y + hK(k, pb.x));
       if (gb > 0.0 && tEnd > tcur) {
         return tcur + (tEnd - tcur) * (0.0 - ga) / (gb - ga);   // out the top
       }
@@ -442,6 +470,14 @@
     vec2 ndc = (pix / uSize) * 2.0 - 1.0;
     vec3 d = normalize(uFwd + uRight * ndc.x * uTanF * (uSize.x / uSize.y) + uUp * ndc.y * uTanF);
     vec3 o = uEye;
+    if (uDofK > 0.0) {
+      float focusT = uFocusDist / max(dot(d, uFwd), 1e-4);
+      vec3 focusPoint = uEye + d * focusT;
+      float r1 = rnd(seed), r2 = rnd(seed);
+      vec2 ap = sqrt(r1) * vec2(cos(6.2831853 * r2), sin(6.2831853 * r2));
+      o += (uRight * ap.x + uUp * ap.y) * uDofK * uFocusDist;
+      d = normalize(focusPoint - o);
+    }
     vec3 L = vec3(0.0);
     vec3 tp = vec3(1.0);
     int nDiff = 0;
@@ -576,16 +612,18 @@
   let traceMs = 0;
 
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC', 'cDofOn', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
+  const getV = el => el.type === 'checkbox' ? el.checked : el.value;
+  const setV = (el, v) => { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
   try {
     const saved = JSON.parse(localStorage.getItem('sd3d-light-v2') || 'null');
-    if (saved) for (const id in ctl) if (saved[id] !== undefined) ctl[id].value = saved[id];
+    if (saved) for (const id in ctl) if (saved[id] !== undefined) setV(ctl[id], saved[id]);
   } catch (e) {}
   const saveLight = () => {
     const vals = {};
-    for (const id in ctl) vals[id] = ctl[id].value;
+    for (const id in ctl) vals[id] = getV(ctl[id]);
     localStorage.setItem('sd3d-light-v2', JSON.stringify(vals));
   };
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
@@ -605,6 +643,9 @@
     const frostAngle = 0.5 * Math.pow(40, +ctl.cFrost.value / 100) * Math.PI / 180;
     light.frostCos = Math.cos(frostAngle);
     light.hScale = +ctl.cScale.value / 100;
+    light.dofK = ctl.cDofOn.checked ? +ctl.cAper.value : 0;
+    light.focusDist = +ctl.cFocus.value;
+    document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
   }
   readLight();
   const reset = () => { frame = 0; traceMs = 0; };
@@ -622,8 +663,8 @@
   // ---- saved tunings ----
   // built-ins ship with the page; user-saved ones live in localStorage
   const BUILTIN_TUNINGS = [
-    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000' } },
-    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a' } },
+    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
   ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
@@ -654,7 +695,7 @@
       if (m) n = Math.max(n, +m[1]);
     }
     const vals = {};
-    for (const id in ctl) vals[id] = ctl[id].value;
+    for (const id in ctl) vals[id] = getV(ctl[id]);
     userTunings.push({ name: 'Tuning ' + (n + 1), vals });
     saveTunings();
     refreshTunSel('Tuning ' + (n + 1));
@@ -669,7 +710,7 @@
     localStorage.setItem('sd3d-tuning-sel', tunSel.value);
     const t = allTunings().find(x => x.name === tunSel.value);
     if (!t) return;
-    for (const id in ctl) if (t.vals[id] !== undefined) ctl[id].value = t.vals[id];
+    for (const id in ctl) if (t.vals[id] !== undefined) setV(ctl[id], t.vals[id]);
     readLight();
     saveLight();
     reset();
@@ -719,6 +760,8 @@
     gl.uniform3fv(U('uUp'), cam.up);
     gl.uniform3fv(U('uFwd'), cam.fwd);
     gl.uniform1f(U('uTanF'), Math.tan(FOV / 2));
+    gl.uniform1f(U('uDofK'), light.dofK);
+    gl.uniform1f(U('uFocusDist'), light.focusDist);
     gl.uniform1f(U('uFrame'), frame);
     gl.uniform3fv(U('uSunDir'), light.sunDir);
     gl.uniform3fv(U('uSunE'), light.sunE);
@@ -757,11 +800,11 @@
       if (frame > 0) traceMs += Math.min(gap, 1000); // clamp so hidden-tab gaps don't count
       renderSample();
       if (frame % 10 === 0 || frame < 10) {
-        hint.textContent = `path tracing · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
+        hint.textContent = `rendering ${Math.min(100, Math.round(frame / MAX_SPP * 100))}%`;
       }
     } else if (!wasDone) {
       wasDone = true;
-      hint.textContent = `done · ${frame} spp · drag pan · wheel zoom · right-drag rotate`;
+      hint.textContent = `rendering ${Math.min(100, Math.round(frame / MAX_SPP * 100))}%`;
     }
     requestAnimationFrame(loop);
   }
