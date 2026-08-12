@@ -4,17 +4,52 @@
 
 ![Path-traced 3D view of my Reddit posting history](gallery/BeautyShot.png)
 
-A visualizer for my personal Reddit history (posts and comments with score data).
+A visualizer for Reddit history: posts and comments, score data, subreddit
+distribution, trends, and path-traced 3D views.
 
 ## Using the visualizer
 
+Open the [live visualization](https://gregbahm.github.io/RedditData/) to explore
+the built-in demo or select **Show me my own data**.
+
+To visualize your own history:
+
+1. Request an export from [Reddit's data request page](https://www.reddit.com/settings/data-request).
+2. Download the ZIP Reddit emails to you; do not extract it.
+3. Drop the ZIP onto the import screen.
+4. Wait for score and thread-title enrichment, then select **Display my data**.
+
+The ZIP and its CSV contents are read locally in your browser. They are not
+uploaded to this project. Reddit's export omits scores, so only post and comment
+IDs are sent to the third-party
+[Arctic Shift](https://arctic-shift.photon-reddit.com) archive. The processed
+dataset is stored in IndexedDB in your browser profile so the 2D and 3D views
+share it. **Restore demo data** clears that stored personal dataset.
+
+Some IDs may not exist in Arctic Shift. Those records remain visible and are
+marked `score unavailable`; they are plotted at the zero-score position and do
+not contribute points to score totals.
+
+## Running locally
+
 ```
 git clone https://github.com/GregBahm/RedditData.git
+cd RedditData
+python -m http.server 8765
 ```
 
-Then open `viz/index.html` in a browser. That's it — the repo is self-contained.
-The visualizer reads only `viz/data.js`, the pre-built dataset committed here
-(all posts/comments merged with scores and thread titles).
+Then open <http://127.0.0.1:8765/viz/>. The repository is self-contained.
+The committed demo reads `viz/data.js`; personal imports remain only in the
+browser profile.
+
+## Browser dependencies
+
+The following libraries are vendored so page loads do not depend on a CDN:
+
+- [JSZip 3.10.1](https://github.com/Stuk/jszip), MIT or GPLv3
+- [Papa Parse 5.4.1](https://www.papaparse.com/), MIT
+
+Their license files are under `viz/vendor/`.
 
 ## Regenerating the data
 

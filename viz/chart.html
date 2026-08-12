@@ -263,8 +263,9 @@
 <div id="tip"></div>
 
 <script src="data.js"></script>
+<script src="import/dataset-store.js"></script>
 <script>
-(() => {
+(async () => {
   const canvas = document.getElementById('chart');
   const ctx = canvas.getContext('2d');
   const wrap = document.getElementById('chart-wrap');
@@ -272,12 +273,14 @@
   const scaleToggle = document.getElementById('scaleToggle');
 
   // ---- data prep ----
-  const items = REDDIT_DATA.map(d => ({
+  const sourceData = await RedditDataset.getActive(REDDIT_DATA);
+  const items = sourceData.map(d => ({
     ...d,
-    score: +d.score,
+    scoreAvailable: d.score !== null && d.score !== undefined && Number.isFinite(+d.score),
+    score: d.score !== null && d.score !== undefined && Number.isFinite(+d.score) ? +d.score : 0,
     len: (d.body || '').length,
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
-  })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
+  })).filter(d => Number.isFinite(d.time));
   items.sort((a, b) => a.time - b.time);
 
   // drop the final, incomplete week (the export ends mid-week, which would
@@ -286,7 +289,8 @@
     const d = new Date(items[items.length - 1].time);
     const day = (d.getUTCDay() + 6) % 7;
     const cut = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
-    while (items.length && items[items.length - 1].time >= cut) items.pop();
+    const firstIncomplete = items.findIndex(item => item.time >= cut);
+    if (firstIncomplete > 0) items.length = firstIncomplete;
   }
 
   const t0 = items[0].time, t1 = items[items.length - 1].time;
@@ -299,12 +303,15 @@
     return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
   })();
   const weeks = Array.from({ length: Math.floor((t1 - w0) / MS_WEEK) + 1 },
-    (_, i) => ({ t: w0 + i * MS_WEEK + MS_WEEK / 2, count: 0, net: 0, pos: 0, text: 0 }));
+    (_, i) => ({ t: w0 + i * MS_WEEK + MS_WEEK / 2, count: 0, scoreCount: 0, net: 0, pos: 0, text: 0 }));
   for (const d of items) {
     const w = weeks[Math.floor((d.time - w0) / MS_WEEK)];
     w.count++;
-    w.net += d.score;
-    if (d.score > 1) w.pos++;
+    if (d.scoreAvailable) {
+      w.scoreCount++;
+      w.net += d.score;
+      if (d.score > 1) w.pos++;
+    }
     w.text += d.len;
   }
 
@@ -320,8 +327,8 @@
     { label: 'posts / day', color: () => C.ovFreq, fmt: fmtNum, vals: weeks.map(w => w.count / 7) },
     { label: 'text (chars) / day', color: () => C.ovText, fmt: fmtNum, vals: weeks.map(w => w.text / 7) },
     { label: 'net score / day', color: () => C.ovNet, fmt: fmtNum, vals: weeks.map(w => w.net / 7) },
-    { label: '% positive', color: () => C.ovPct, fmt: v => Math.round(v) + '%', vals: weeks.map(w => w.count ? w.pos / w.count * 100 : null) },
-    { label: 'avg score', color: () => C.ovAvg, fmt: fmtNum, vals: weeks.map(w => w.count ? w.net / w.count : null) },
+    { label: '% positive', color: () => C.ovPct, fmt: v => Math.round(v) + '%', vals: weeks.map(w => w.scoreCount ? w.pos / w.scoreCount * 100 : null) },
+    { label: 'avg score', color: () => C.ovAvg, fmt: fmtNum, vals: weeks.map(w => w.scoreCount ? w.net / w.scoreCount : null) },
     { label: 'avg length (chars)', color: () => C.accent, fmt: fmtNum, vals: weeks.map(w => w.count ? w.text / w.count : null) },
   ];
   let trendsSm = null;      // smoothed series per section, cached per draw
@@ -871,6 +878,7 @@
         pointerY: detailPointerY,
         detail: d ? {
           score: d.score,
+          scoreAvailable: d.scoreAvailable,
           time: d.time,
           sub: d.sub,
           type: d.type,
@@ -897,7 +905,9 @@
       return;
     }
     const meta = el('div', 'meta');
-    meta.append(el('span', 'score', d.score.toLocaleString() + (Math.abs(d.score) === 1 ? ' point' : ' points')));
+    meta.append(el('span', 'score', d.scoreAvailable
+      ? d.score.toLocaleString() + (Math.abs(d.score) === 1 ? ' point' : ' points')
+      : 'score unavailable'));
     meta.append(el('span', 'k', new Date(d.time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })));
     meta.append(el('span', 'k', 'r/' + d.sub));
     meta.append(el('span', 'k', d.type));

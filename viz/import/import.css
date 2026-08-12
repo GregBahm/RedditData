@@ -1,0 +1,111 @@
+.import-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.dataset-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+.import-dialog {
+  width: min(720px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+.import-dialog::backdrop { background: rgba(0, 0, 0, 0.56); }
+.import-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.import-dialog-head h2 {
+  margin: 0;
+  font-size: 19px;
+}
+.import-dialog-close {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+}
+.import-dialog-body {
+  max-height: calc(100vh - 90px);
+  padding: 18px 20px 22px;
+  overflow-y: auto;
+}
+.import-dialog-body ol { padding-left: 22px; }
+.import-dialog-body li { margin: 5px 0; }
+.import-privacy {
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 8px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.import-drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 170px;
+  margin-top: 16px;
+  padding: 24px;
+  text-align: center;
+  border: 2px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 10px;
+  cursor: pointer;
+}
+.import-drop:hover,
+.import-drop.drag-active,
+.import-drop:focus-within {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: var(--accent);
+}
+.import-drop strong { display: block; font-size: 17px; }
+.import-drop span { display: block; margin-top: 6px; color: var(--muted); }
+.import-file {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.import-state {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.import-state[hidden] { display: none; }
+.import-state[data-kind="error"] {
+  border-color: #c33;
+  background: color-mix(in srgb, #c33 8%, transparent);
+}
+.import-state h3 { margin: 0 0 6px; font-size: 15px; }
+.import-state p { margin: 0; color: var(--secondary); }
+.import-progress {
+  width: 100%;
+  margin-top: 12px;
+  accent-color: var(--accent);
+}
+.import-state-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+@media (max-width: 680px) {
+  .import-actions { width: 100%; margin-left: 0; flex-wrap: wrap; }
+  .dataset-status { order: 2; width: 100%; }
+}

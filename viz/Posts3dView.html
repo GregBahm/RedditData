@@ -179,21 +179,26 @@
   </div>
 </div>
 <script src="data.js"></script>
+<script src="import/dataset-store.js"></script>
 <script>
-(() => {
+(async () => {
   // ---- data ----
-  const items = REDDIT_DATA.map(d => ({
-    score: +d.score,
+  const sourceData = await RedditDataset.getActive(REDDIT_DATA);
+  const items = sourceData.map(d => ({
+    scoreAvailable: d.score !== null && d.score !== undefined && Number.isFinite(+d.score),
+    score: d.score !== null && d.score !== undefined && Number.isFinite(+d.score) ? +d.score : 0,
     post: d.type === 'post',
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
     src: d,
-  })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.score));
+  })).filter(d => Number.isFinite(d.time));
   items.sort((a, b) => a.time - b.time);
   const N = items.length;
   const symlog = s => Math.sign(s) * Math.log10(1 + Math.abs(s));
   const t0 = items[0].time, t1 = items[N - 1].time;
   const ys = items.map(d => symlog(d.score));
   const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const timeSpan = t1 - t0;
+  const scoreSpan = ymax - ymin;
 
   // ---- frozen world layout ----
   // positions and size are fixed at the initial window fit; the "sculpture"
@@ -206,8 +211,10 @@
   const stackCounts = new Map();
   {
     for (let i = 0; i < N; i++) {
-      const sx = 40 + kx0 * ((items[i].time - t0) / (t1 - t0) * 2000);
-      const sy = 40 + ky0 * ((ymax - ys[i]) / (ymax - ymin) * 1000);
+      const tx = timeSpan ? (items[i].time - t0) / timeSpan : 0.5;
+      const ty = scoreSpan ? (ymax - ys[i]) / scoreSpan : 0.5;
+      const sx = 40 + kx0 * (tx * 2000);
+      const sy = 40 + ky0 * (ty * 1000);
       px[i] = sx - W0 / 2;
       py[i] = H0 / 2 - sy;            // y up
       const stackKey = Math.round(px[i] / CELL) * 1048576 + Math.round(py[i] / CELL);
@@ -1144,7 +1151,9 @@
     const d = items[i].src;
     pickPanel.replaceChildren();
     const meta = el2('div', 'meta');
-    meta.append(el2('span', 'score', (+d.score).toLocaleString() + (Math.abs(+d.score) === 1 ? ' point' : ' points')));
+    meta.append(el2('span', 'score', items[i].scoreAvailable
+      ? (+d.score).toLocaleString() + (Math.abs(+d.score) === 1 ? ' point' : ' points')
+      : 'score unavailable'));
     meta.append(document.createTextNode(
       new Date(items[i].time).toLocaleDateString(undefined, { dateStyle: 'medium' }) +
       ' · r/' + d.sub + ' · ' + d.type));
@@ -1366,7 +1375,9 @@
     const maxW = 380, padX = 12, padY = 10, lh = 18;
     const lines = [];
     const push = (text, font, alpha) => lines.push({ text, font, alpha });
-    push((+d.score).toLocaleString() + (Math.abs(+d.score) === 1 ? ' point' : ' points'),
+    push(items[show].scoreAvailable
+      ? (+d.score).toLocaleString() + (Math.abs(+d.score) === 1 ? ' point' : ' points')
+      : 'score unavailable',
       '600 15px system-ui, sans-serif', 1);
     push(new Date(items[show].time).toLocaleDateString(undefined, { dateStyle: 'medium' }) +
       ' · r/' + d.sub + ' · ' + d.type, '13px system-ui, sans-serif', 0.8);

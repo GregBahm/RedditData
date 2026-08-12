@@ -96,10 +96,12 @@
   </div>
 </div>
 <script src="data.js"></script>
+<script src="import/dataset-store.js"></script>
 <script>
-(() => {
+(async () => {
   // ---- data: weekly subreddit composition, top 50, smoothed, absolute ----
-  const items = REDDIT_DATA.map(d => ({
+  const sourceData = await RedditDataset.getActive(REDDIT_DATA);
+  const items = sourceData.map(d => ({
     sub: d.sub,
     time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
   })).filter(d => Number.isFinite(d.time));
@@ -161,7 +163,7 @@
   const CW = 2000, HMAX = 380, TH = 11, GAP = 25;
   const P = TH + GAP;
   const TOTAL = (nB - 1) * P + TH;
-  const X = w => (w - wA) / (wB - wA) * CW;
+  const X = w => wA === wB ? CW / 2 : (w - wA) / (wB - wA) * CW;
   const nCols = wB - wA + 1;
   let peakSub = 1e-6;
   for (let k = 0; k < nB; k++) {

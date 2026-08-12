@@ -215,10 +215,16 @@
     .section-heading span { display: none; }
   }
 </style>
+<link rel="stylesheet" href="import/import.css">
 </head>
 <body>
 <header class="page-header">
-  <h1><a href="https://www.reddit.com/u/GregBahm">u/GregBahm</a>'s Reddit Addiction Visualized</h1>
+  <h1 id="pageTitle"><a href="https://www.reddit.com/u/GregBahm">u/GregBahm</a>'s Reddit Addiction Visualized</h1>
+  <div class="import-actions">
+    <span class="dataset-status" id="datasetStatus"></span>
+    <button class="control" id="clearImported" type="button" hidden>Restore demo data</button>
+    <button class="control" id="importOpen" type="button">Show me my own data</button>
+  </div>
 </header>
 <main>
   <section class="section">
@@ -307,6 +313,43 @@
   </section>
 </main>
 <aside id="postDetail" aria-live="polite" hidden></aside>
+<dialog class="import-dialog" id="importDialog" aria-labelledby="importTitle">
+  <div class="import-dialog-head">
+    <h2 id="importTitle">Visualize your Reddit data</h2>
+    <button class="control import-dialog-close" id="importClose" type="button" aria-label="Close import">×</button>
+  </div>
+  <div class="import-dialog-body">
+    <ol>
+      <li>Open Reddit's <a href="https://www.reddit.com/settings/data-request" target="_blank" rel="noopener">data request page</a>.</li>
+      <li>Request your account data using the available export option.</li>
+      <li>Wait for Reddit to email your download link.</li>
+      <li>Download the ZIP without extracting it.</li>
+      <li>Return here and choose or drop that ZIP.</li>
+    </ol>
+    <div class="import-privacy">
+      Your ZIP, titles, bodies, and username stay in this browser and are not uploaded to this project.
+      Reddit exports do not include scores, so post IDs and comment IDs are sent to the third-party
+      <a href="https://arctic-shift.photon-reddit.com" target="_blank" rel="noopener">Arctic Shift archive</a>
+      to retrieve score snapshots and comment thread titles. Some archived items may be unavailable.
+    </div>
+    <label class="import-drop" id="importDrop">
+      <strong>Drop your Reddit export ZIP here</strong>
+      <span>or click to choose a file</span>
+      <input class="import-file" id="importFile" type="file" accept=".zip,application/zip">
+    </label>
+    <section class="import-state" id="importState" aria-live="polite" hidden>
+      <h3 id="importStateTitle"></h3>
+      <p id="importStateMessage"></p>
+      <progress class="import-progress" id="importProgress"></progress>
+      <div class="import-state-actions" id="importStateActions"></div>
+    </section>
+  </div>
+</dialog>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/papaparse.min.js"></script>
+<script src="import/dataset-store.js"></script>
+<script src="import/reddit-export.js"></script>
+<script src="import/arctic-shift.js"></script>
 <script>
 (() => {
   const slider = document.getElementById('smoothSlider');
@@ -403,7 +446,9 @@
 
     const meta = document.createElement('div');
     meta.className = 'meta';
-    addText(meta, 'span', 'score', d.score.toLocaleString() + (Math.abs(d.score) === 1 ? ' point' : ' points'));
+    addText(meta, 'span', 'score', d.scoreAvailable
+      ? d.score.toLocaleString() + (Math.abs(d.score) === 1 ? ' point' : ' points')
+      : 'score unavailable');
     addText(meta, 'span', 'secondary', new Date(d.time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
     addText(meta, 'span', 'secondary', 'r/' + d.sub);
     addText(meta, 'span', 'secondary', d.type);
@@ -482,5 +527,6 @@
   }
 })();
 </script>
+<script src="import/import-dialog.js"></script>
 </body>
 </html>
