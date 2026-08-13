@@ -8,10 +8,44 @@
   * { margin: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
   body { background: #f2f1ee; font-family: system-ui, sans-serif; }
-  #gl { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #gl {
+    position: fixed; top: 0; left: 50%;
+    width: max(100vw, 100vh); height: 100%;
+    transform: translateX(-50%);
+    cursor: grab;
+  }
   #hint {
     position: fixed; right: 14px; bottom: 10px;
     font-size: 12px; color: #898781; pointer-events: none;
+  }
+  #rotatePad {
+    position: fixed; top: 14px; right: 14px;
+    z-index: 6;
+    width: 68px; height: 68px;
+    padding: 0;
+    border: 1px solid rgba(11, 11, 11, 0.24);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), rgba(220, 220, 216, 0.78) 55%, rgba(150, 150, 145, 0.72));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+    cursor: grab;
+    touch-action: none;
+  }
+  #rotatePad:active { cursor: grabbing; }
+  #rotatePad::before, #rotatePad::after {
+    content: "";
+    position: absolute;
+    inset: 11px 5px;
+    border: 1px solid rgba(50, 50, 48, 0.48);
+    border-radius: 50%;
+  }
+  #rotatePad::after {
+    inset: 5px 11px;
+  }
+  #rotatePad span {
+    position: absolute;
+    left: 8px; right: 8px; top: 50%;
+    border-top: 1px solid rgba(50, 50, 48, 0.48);
   }
   #back2d {
     position: fixed; top: 10px; left: 14px;
@@ -70,14 +104,17 @@
 <canvas id="gl"></canvas>
 <a id="back2d" href="index.html">2D View</a>
 <div id="hint">rendering 0%</div>
-<div id="panel">
-  <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
+<button id="rotatePad" type="button" aria-label="Rotate view" title="Drag to rotate view"><span></span></button>
+<div id="panel" class="closed">
+  <div id="panelHead">tuning <span id="panelArrow">▸</span></div>
   <div id="panelBody">
     <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="155"></div>
     <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="10"></div>
     <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="7"></div>
     <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff0db"><input type="range" id="cSunI" min="0" max="200" step="0.05" value="40"></div>
     <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#2a464c"><input type="range" id="cSkyI" min="0" max="100" step="0.05" value="20"></div>
+    <div class="prow"><span>fog color</span><input type="color" id="cFogC" value="#d7dde2"></div>
+    <div class="prow"><span>fog thickness</span><input type="range" id="cFogT" min="0" max="100" step="1" value="50"></div>
     <div class="prow"><span>opacity</span><input type="range" id="cOpac" min="0" max="100" value="45"></div>
     <div class="prow"><span>frost</span><input type="range" id="cFrost" min="0" max="100" value="60"></div>
     <div class="prow"><span>bar scale</span><input type="range" id="cScale" min="5" max="300" value="100"></div>
@@ -201,7 +238,9 @@
   ig.textAlign = 'center';
   const y0year = new Date(w0 + wA * MS_WEEK).getUTCFullYear() + 1;
   const y1year = new Date(w0 + wB * MS_WEEK).getUTCFullYear();
-  for (let y = y0year; y <= y1year; y++) {
+  const yearStep = (window.innerWidth - 80) /
+    Math.max(1, y1year - y0year + 1) < 52 ? 2 : 1;
+  for (let y = y0year; y <= y1year; y += yearStep) {
     const t = Date.UTC(y, 0, 1);
     const w = (t - w0) / MS_WEEK;
     if (w < wA || w > wB) continue;
@@ -247,6 +286,9 @@
   uniform vec3 uSunDir;
   uniform vec3 uSunE;
   uniform vec3 uSkyL;
+  uniform vec3 uFogColor;
+  uniform vec2 uFogRange;
+  uniform float uFogExponent;
   uniform vec3 uAlbB;
   uniform vec3 uLblC;
   uniform float uSunCos;
@@ -482,11 +524,13 @@
     }
     vec3 L = vec3(0.0);
     vec3 tp = vec3(1.0);
+    float primaryDist = 1e30;
     int nDiff = 0;
     for (int it2 = 0; it2 < 6; it2++) {
       // primary rays get the full walk; secondary rays a short leash so
       // grazing rays can't stall the GPU into a driver reset
       HitInfo h = trace(o, d, it2 == 0 ? 1000 : 300);
+      if (it2 == 0 && h.kind != 0) primaryDist = h.t;
       if (h.kind == 0) { L += tp * uSkyL; break; }
       vec3 p = o + d * h.t;
       vec3 alb = h.kind == 3 ? h.alb : uAlbB;
@@ -529,6 +573,9 @@
       d = cosineDir(h.n, seed);
       o = p + h.n * 0.5;
     }
+    float fogRamp = clamp((primaryDist - uFogRange.x) / (uFogRange.y - uFogRange.x), 0.0, 1.0);
+    float fogAmount = pow(fogRamp, uFogExponent);
+    L = mix(L, uFogColor, fogAmount);
     vec3 prev = texelFetch(uPrev, ivec2(gl_FragCoord.xy), 0).rgb;
     outc = vec4(mix(prev, L, 1.0 / (uFrame + 1.0)), 1.0);
   }`;
@@ -591,12 +638,13 @@
   }
 
   // ---- accumulation targets ----
-  let W = 0, H = 0;
+  let W = 0, H = 0, RW = 0, RH = 0;
+  let renderScale = 1;
   let accTex = [null, null], accFb = [null, null], flip = 0;
   function mkTargets() {
     for (let i = 0; i < 2; i++) {
       if (accTex[i]) { gl.deleteTexture(accTex[i]); gl.deleteFramebuffer(accFb[i]); }
-      accTex[i] = mkTex(W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
+      accTex[i] = mkTex(RW, RH, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
       accFb[i] = gl.createFramebuffer();
       gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[i]);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, accTex[i], 0);
@@ -614,7 +662,7 @@
   let traceMs = 0;
 
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC', 'cDofOn', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC', 'cDofOn', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -635,6 +683,8 @@
     light.sunDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
     light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
     light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
+    light.fogColor = hex2lin(ctl.cFogC.value);
+    light.fogExponent = 8 * Math.pow(0.03125, +ctl.cFogT.value / 100);
     light.albB = hex2lin(ctl.cBack.value);
     light.lblC = hex2lin(ctl.cLblC.value);
     // sun half-angle: 15 deg at minimum sharpness down to 0.045 deg at maximum
@@ -665,8 +715,9 @@
   // ---- saved tunings ----
   // built-ins ship with the page; user-saved ones live in localStorage
   const BUILTIN_TUNINGS = [
-    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
-    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Default', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cFogC: '#d7dde2', cFogT: '50', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
   ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
@@ -717,7 +768,7 @@
     saveLight();
     reset();
   });
-  refreshTunSel(localStorage.getItem('sd3d-tuning-sel') ?? 'Tuning 1');
+  refreshTunSel(localStorage.getItem('sd3d-tuning-sel') ?? 'Default');
   const panel = document.getElementById('panel');
   const panelArrow = document.getElementById('panelArrow');
   const setPanel = closed => {
@@ -727,7 +778,7 @@
   };
   document.getElementById('panelHead').addEventListener('click', () =>
     setPanel(!panel.classList.contains('closed')));
-  if (localStorage.getItem('sd3d-panel-closed') === '1') setPanel(true);
+  setPanel(localStorage.getItem('sd3d-panel-closed') !== '0');
 
   function camBasis() {
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
@@ -750,13 +801,13 @@
     const cam = camBasis();
     gl.useProgram(progTrace);
     gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[flip]);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, RW, RH);
     const U = n => gl.getUniformLocation(progTrace, n);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texH); gl.uniform1i(U('uH'), 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texInk); gl.uniform1i(U('uInk'), 1);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, accTex[1 - flip]); gl.uniform1i(U('uPrev'), 2);
     gl.uniform3fv(U('uCols'), colFlat);
-    gl.uniform2f(U('uSize'), W, H);
+    gl.uniform2f(U('uSize'), RW, RH);
     gl.uniform3fv(U('uEye'), cam.eye);
     gl.uniform3fv(U('uRight'), cam.right);
     gl.uniform3fv(U('uUp'), cam.up);
@@ -768,6 +819,9 @@
     gl.uniform3fv(U('uSunDir'), light.sunDir);
     gl.uniform3fv(U('uSunE'), light.sunE);
     gl.uniform3fv(U('uSkyL'), light.skyL);
+    gl.uniform3fv(U('uFogColor'), light.fogColor);
+    gl.uniform2f(U('uFogRange'), dist * 0.75, dist * 2.5);
+    gl.uniform1f(U('uFogExponent'), light.fogExponent);
     gl.uniform3fv(U('uAlbB'), light.albB);
     gl.uniform3fv(U('uLblC'), light.lblC);
     gl.uniform1f(U('uSunCos'), light.sunCos);
@@ -778,7 +832,7 @@
 
     gl.useProgram(progShow);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, RW, RH);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, accTex[flip]);
     gl.uniform1i(gl.getUniformLocation(progShow, 'uAcc'), 0);
@@ -813,6 +867,35 @@
 
   // ---- interaction ----
   let mode = null, lastX = 0, lastY = 0;
+  const rotateCamera = (dx, dy) => {
+    yaw += dx * 0.005;
+    pitch = Math.max(-1.3, Math.min(1.3, pitch + dy * 0.005));
+    reset();
+  };
+  const rotatePad = document.getElementById('rotatePad');
+  let rotatePadPointer = null, rotatePadX = 0, rotatePadY = 0;
+  rotatePad.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    setInteractiveRender(true);
+    rotatePadPointer = e.pointerId;
+    rotatePadX = e.clientX;
+    rotatePadY = e.clientY;
+    rotatePad.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  rotatePad.addEventListener('pointermove', e => {
+    if (e.pointerId !== rotatePadPointer) return;
+    rotateCamera(e.clientX - rotatePadX, e.clientY - rotatePadY);
+    rotatePadX = e.clientX;
+    rotatePadY = e.clientY;
+  });
+  const stopRotatePad = e => {
+    if (e.pointerId !== rotatePadPointer) return;
+    rotatePadPointer = null;
+    setInteractiveRender(false);
+  };
+  rotatePad.addEventListener('pointerup', stopRotatePad);
+  rotatePad.addEventListener('pointercancel', stopRotatePad);
   canvas.addEventListener('webglcontextlost', e => {
     e.preventDefault();
     const last = +(sessionStorage.getItem('sd3d-ctxlost') || 0);
@@ -822,6 +905,7 @@
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
+    setInteractiveRender(true);
     mode = e.button === 2 ? 'rotate' : 'pan';
     lastX = e.clientX; lastY = e.clientY;
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
@@ -831,8 +915,7 @@
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     if (mode === 'rotate') {
-      yaw += dx * 0.005;
-      pitch = Math.max(-1.3, Math.min(1.3, pitch + dy * 0.005));
+      rotateCamera(dx, dy);
     } else {
       const wpp = 2 * dist * Math.tan(FOV / 2) / H;
       const cam = camBasis();
@@ -840,28 +923,52 @@
       target.y -= (cam.right[1] * dx - cam.up[1] * dy) * wpp;
       target.z -= (cam.right[2] * dx - cam.up[2] * dy) * wpp;
     }
-    reset();
+    if (mode === 'pan') reset();
     requestAnimationFrame(() => {});
   });
-  canvas.addEventListener('pointerup', () => { mode = null; });
+  canvas.addEventListener('pointerup', () => {
+    mode = null;
+    setInteractiveRender(false);
+  });
+  canvas.addEventListener('pointercancel', () => {
+    mode = null;
+    setInteractiveRender(false);
+  });
+  let wheelRenderTimer = 0;
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
+    setInteractiveRender(true);
+    clearTimeout(wheelRenderTimer);
+    wheelRenderTimer = setTimeout(() => setInteractiveRender(false), 160);
     dist *= Math.pow(1.0015, e.deltaY);
     dist = Math.max(150, Math.min(15000, dist));
     reset();
   }, { passive: false });
 
   function resize() {
-    W = window.innerWidth; H = window.innerHeight;
-    canvas.width = W;
-    canvas.height = H;
+    W = Math.max(window.innerWidth, window.innerHeight); H = window.innerHeight;
+    RW = Math.max(1, Math.round(W * renderScale));
+    RH = Math.max(1, Math.round(H * renderScale));
+    canvas.width = RW;
+    canvas.height = RH;
+    mkTargets();
+    reset();
+  }
+  function setInteractiveRender(active) {
+    const next = active ? (Math.min(window.innerWidth, window.innerHeight) < 700 ? 0.3 : 0.5) : 1;
+    if (next === renderScale) return;
+    renderScale = next;
+    RW = Math.max(1, Math.round(W * renderScale));
+    RH = Math.max(1, Math.round(H * renderScale));
+    canvas.width = RW;
+    canvas.height = RH;
     mkTargets();
     reset();
   }
   window.addEventListener('resize', resize);
   resize();
   requestAnimationFrame(loop);
-  window.__sd = { sample: renderSample, spp: () => frame, gl };   // debug hook
+  window.__sd = { sample: renderSample, spp: () => frame, camera: () => ({ yaw, pitch }), gl };   // debug hook
 })();
 </script>
 </body>

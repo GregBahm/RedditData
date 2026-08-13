@@ -8,10 +8,44 @@
   * { margin: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
   body { background: #f9f9f7; font-family: system-ui, sans-serif; }
-  #gl { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #gl {
+    position: fixed; top: 0; left: 50%;
+    width: max(100vw, 100vh); height: 100%;
+    transform: translateX(-50%);
+    cursor: grab;
+  }
   #hint {
     position: fixed; right: 14px; bottom: 10px;
     font-size: 12px; color: #898781; pointer-events: none;
+  }
+  #rotatePad {
+    position: fixed; top: 14px; right: 14px;
+    z-index: 6;
+    width: 68px; height: 68px;
+    padding: 0;
+    border: 1px solid rgba(11, 11, 11, 0.24);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), rgba(220, 220, 216, 0.78) 55%, rgba(150, 150, 145, 0.72));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+    cursor: grab;
+    touch-action: none;
+  }
+  #rotatePad:active { cursor: grabbing; }
+  #rotatePad::before, #rotatePad::after {
+    content: "";
+    position: absolute;
+    inset: 11px 5px;
+    border: 1px solid rgba(50, 50, 48, 0.48);
+    border-radius: 50%;
+  }
+  #rotatePad::after {
+    inset: 5px 11px;
+  }
+  #rotatePad span {
+    position: absolute;
+    left: 8px; right: 8px; top: 50%;
+    border-top: 1px solid rgba(50, 50, 48, 0.48);
   }
   #back2d {
     position: fixed; top: 10px; left: 14px;
@@ -141,20 +175,23 @@
 <canvas id="gl"></canvas>
 <a id="back2d" href="index.html">2D View</a>
 <div id="hint">rendering 0%</div>
+<button id="rotatePad" type="button" aria-label="Rotate view" title="Drag to rotate view"><span></span></button>
 <div id="pick"></div>
-<div id="panel">
-  <div id="panelHead">tuning <span id="panelArrow">▾</span></div>
+<div id="panel" class="closed">
+  <div id="panelHead">tuning <span id="panelArrow">▸</span></div>
   <div id="panelBody">
     <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="25"></div>
     <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="73"></div>
-    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="32"></div>
-    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#cfbaaf"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="13"></div>
-    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#4977a2"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="2.1"></div>
-    <div class="prow"><span>items color</span><input type="range" id="cSph" min="0" max="10" step="0.05" value="1"><output id="cSphVal">1×</output></div>
-    <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#ffffff"></div>
-    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#ffffff"></div>
-    <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#383838"></div>
-    <div class="prow"><span>post panel</span><input type="color" id="cPickBg" value="#212121" title="Background"><input type="color" id="cPickTx" value="#ffffff" title="Text"></div>
+    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="0"></div>
+    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#cfbaaf"><input type="range" id="cSunI" min="0" max="40" step="0.05" value="11.95"></div>
+    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#4977a2"><input type="range" id="cSkyI" min="0" max="20" step="0.05" value="3.6"></div>
+    <div class="prow"><span>fog color</span><input type="color" id="cFogC" value="#161718"></div>
+    <div class="prow"><span>fog thickness</span><input type="range" id="cFogT" min="0" max="100" step="1" value="50"></div>
+    <div class="prow"><span>items color</span><input type="range" id="cSph" min="0" max="10" step="0.05" value="2.2"><output id="cSphVal">2.2×</output></div>
+    <div class="prow"><span>canvas</span><input type="color" id="cWall" value="#212121"></div>
+    <div class="prow"><span>backdrop</span><input type="color" id="cBack" value="#212121"></div>
+    <div class="prow"><span>labels</span><input type="color" id="cLbl" value="#ffffff"></div>
+    <div class="prow"><span>post panel</span><input type="color" id="cPickBg" value="#0f0f0f" title="Background"><input type="color" id="cPickTx" value="#ffffff" title="Text"></div>
     <div class="prow"><span>perspective</span><input type="checkbox" id="cPersp" checked></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn" checked></div>
     <div id="dofRows">
@@ -204,7 +241,7 @@
   // ---- frozen world layout ----
   // positions and size are fixed at the initial window fit; the "sculpture"
   // then only gets viewed (pan / zoom / rotate), so lighting can be coherent.
-  const W0 = window.innerWidth, H0 = window.innerHeight;
+  const W0 = Math.max(window.innerWidth, window.innerHeight), H0 = window.innerHeight;
   const R = 4;            // sphere radius, world units
   const CELL = 2 * R;     // stacking bin and trace-grid cell size
   const kx0 = (W0 - 80) / 2000, ky0 = (H0 - 80) / 1000;
@@ -331,6 +368,9 @@
   uniform vec3 uSunE;                // sun color * intensity (irradiance)
   uniform float uSunCos;             // cosine of the sun's angular radius
   uniform vec3 uSkyL;                // dome color * intensity (radiance)
+  uniform vec3 uFogColor;
+  uniform vec2 uFogRange;
+  uniform float uFogExponent;
   uniform vec3 uAlbW;                // canvas-rectangle albedo
   uniform vec3 uAlbB;                // wall albedo outside the rectangle
   uniform float uSphBrightness;      // multiplier for each item's base density color
@@ -492,8 +532,10 @@
 
     vec3 L = vec3(0.0);
     vec3 tp = vec3(1.0);
+    float primaryDist = 1e30;
     for (int bounce = 0; bounce < 2; bounce++) {
       vec2 h = trace(o, d);
+      if (bounce == 0 && h.y >= -1.5) primaryDist = h.x;
       if (h.y < -1.5) { L += tp * uSkyL; break; }
       // hovered / pinned items glow: emissive, so the light also spills
       // onto neighbors through the bounce
@@ -541,6 +583,9 @@
       d = cosineDir(n, seed);
       o = p + n * 0.02;
     }
+    float fogRamp = clamp((primaryDist - uFogRange.x) / (uFogRange.y - uFogRange.x), 0.0, 1.0);
+    float fogAmount = pow(fogRamp, uFogExponent);
+    L = mix(L, uFogColor, fogAmount);
 
     vec3 prev = texelFetch(uPrev, ivec2(gl_FragCoord.xy), 0).rgb;
     outc = vec4(mix(prev, L, 1.0 / (uFrame + 1.0)), 1.0);
@@ -590,12 +635,13 @@
   const texIdx = mkTex(IDX_W, IDX_H, gl.R32UI, gl.RED_INTEGER, gl.UNSIGNED_INT, idxData);
 
   // ---- accumulation targets ----
-  let W = 0, H = 0;
+  let W = 0, H = 0, RW = 0, RH = 0;
+  let renderScale = 1;
   let accTex = [null, null], accFb = [null, null], flip = 0;
   function mkTargets() {
     for (let i = 0; i < 2; i++) {
       if (accTex[i]) { gl.deleteTexture(accTex[i]); gl.deleteFramebuffer(accFb[i]); }
-      accTex[i] = mkTex(W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
+      accTex[i] = mkTex(RW, RH, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
       accFb[i] = gl.createFramebuffer();
       gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[i]);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, accTex[i], 0);
@@ -626,7 +672,7 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cKfSec']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cKfSec']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -652,6 +698,8 @@
     const halfAngle = 15 * Math.pow(0.003, +ctl.cSharp.value / 100) * Math.PI / 180;
     light.sunCos = Math.cos(halfAngle);
     light.skyL = hex2lin(ctl.cSkyC.value).map(c => c * +ctl.cSkyI.value);
+    light.fogColor = hex2lin(ctl.cFogC.value);
+    light.fogExponent = 8 * Math.pow(0.03125, +ctl.cFogT.value / 100);
     light.sphBrightness = +ctl.cSph.value;
     document.getElementById('cSphVal').textContent = light.sphBrightness.toFixed(light.sphBrightness % 1 ? 2 : 0) + '×';
     light.albW = hex2lin(ctl.cWall.value);
@@ -683,7 +731,7 @@
   function renderSample() {
     gl.useProgram(progTrace);
     gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[flip]);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, RW, RH);
     const U = n => gl.getUniformLocation(progTrace, n);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texPos); gl.uniform1i(U('uPos'), 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texGrid); gl.uniform1i(U('uGrid'), 1);
@@ -695,15 +743,19 @@
     gl.uniform3fv(U('uAlbL'), light.albL);
     gl.uniform2f(U('uGridMin'), gminX, gminY);
     gl.uniform2i(U('uGridDim'), GW, GH);
-    gl.uniform2f(U('uSize'), W, H);
-    gl.uniform2f(U('uPan'), pan.x, pan.y);
-    gl.uniform1f(U('uZoom'), zoom);
+    gl.uniform2f(U('uSize'), RW, RH);
+    gl.uniform2f(U('uPan'), pan.x * renderScale, pan.y * renderScale);
+    gl.uniform1f(U('uZoom'), zoom * renderScale);
     gl.uniformMatrix3fv(U('uCamToWorld'), false, camToWorld());
     gl.uniform1f(U('uFrame'), frame);
     gl.uniform3fv(U('uSunDir'), light.sunDir);
     gl.uniform3fv(U('uSunE'), light.sunE);
     gl.uniform1f(U('uSunCos'), light.sunCos);
     gl.uniform3fv(U('uSkyL'), light.skyL);
+    gl.uniform3fv(U('uFogColor'), light.fogColor);
+    const fogDepth = light.persp ? EYE_D : 6000;
+    gl.uniform2f(U('uFogRange'), fogDepth * 0.75, fogDepth * 2.5);
+    gl.uniform1f(U('uFogExponent'), light.fogExponent);
     gl.uniform3fv(U('uAlbW'), light.albW);
     gl.uniform3fv(U('uAlbB'), light.albB);
     gl.uniform1f(U('uSphBrightness'), light.sphBrightness);
@@ -719,7 +771,7 @@
 
     gl.useProgram(progShow);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, RW, RH);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, accTex[flip]);
     gl.uniform1i(gl.getUniformLocation(progShow, 'uAcc'), 0);
@@ -769,11 +821,15 @@
   }
 
   // ---- saved tunings ----
+  const BUILTIN_TUNINGS = [
+    { name: 'Default', vals: { cAz: '25', cEl: '73', cSharp: '0', cSunC: '#cfbaaf', cSunI: '11.95', cSkyC: '#4977a2', cSkyI: '3.6', cFogC: '#161718', cFogT: '50', cSph: '2.2', cWall: '#212121', cBack: '#212121', cLbl: '#ffffff', cPickBg: '#0f0f0f', cPickTx: '#ffffff', cPersp: true, cDofOn: true, cPostM: true, cFocus: '160', cAper: '0.024', cKfSec: '2' } },
+  ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
   const tunDel = document.getElementById('tunDel');
   let tunings = [];
   try { tunings = JSON.parse(localStorage.getItem('pt-tunings') || '[]'); } catch (e) {}
+  const allTunings = () => [...BUILTIN_TUNINGS, ...tunings.filter(t => !BUILTIN_TUNINGS.some(b => b.name === t.name))];
   const saveTunings = () => localStorage.setItem('pt-tunings', JSON.stringify(tunings));
   function refreshTunSel(sel) {
     tunSel.replaceChildren();
@@ -781,7 +837,7 @@
     o0.value = '';
     o0.textContent = '— unsaved —';
     tunSel.append(o0);
-    for (const t of tunings) {
+    for (const t of allTunings()) {
       const o = document.createElement('option');
       o.value = t.name;
       o.textContent = t.name;
@@ -792,7 +848,7 @@
   }
   tunSave.addEventListener('click', () => {
     let n = 0;
-    for (const t of tunings) {
+    for (const t of allTunings()) {
       const m = /^Tuning (\d+)$/.exec(t.name);
       if (m) n = Math.max(n, +m[1]);
     }
@@ -803,14 +859,14 @@
     refreshTunSel('Tuning ' + (n + 1));
   });
   tunDel.addEventListener('click', () => {
-    if (!tunSel.value) return;
+    if (!tunSel.value || BUILTIN_TUNINGS.some(b => b.name === tunSel.value)) return;
     tunings = tunings.filter(t => t.name !== tunSel.value);
     saveTunings();
     refreshTunSel('');
   });
   tunSel.addEventListener('change', () => {
     localStorage.setItem('pt-tuning-sel', tunSel.value);
-    const t = tunings.find(x => x.name === tunSel.value);
+    const t = allTunings().find(x => x.name === tunSel.value);
     if (!t) return;
     for (const id in ctl) if (t.vals[id] !== undefined) {
       setV(ctl[id], id === 'cSph' && String(t.vals[id]).startsWith('#') ? 1 : t.vals[id]);
@@ -819,7 +875,7 @@
     saveLight();
     reset();
   });
-  refreshTunSel(localStorage.getItem('pt-tuning-sel') || '');
+  refreshTunSel(localStorage.getItem('pt-tuning-sel') ?? 'Default');
 
   // ---- panel toggle ----
   const panel = document.getElementById('panel');
@@ -831,7 +887,7 @@
   };
   document.getElementById('panelHead').addEventListener('click', () =>
     setPanel(!panel.classList.contains('closed')));
-  if (localStorage.getItem('pt-panel-closed') === '1') setPanel(true);
+  setPanel(localStorage.getItem('pt-panel-closed') !== '0');
 
   // ---- axis labels, rasterized once and painted onto the wall as an ink
   // mask in the wall's albedo, so lighting, shadows, and DoF apply exactly ----
@@ -862,7 +918,8 @@
       put(xL - 14, wyOf(yuOf(v)), lbl, 'right');
     }
     const y0 = new Date(t0).getUTCFullYear() + 1, y1 = new Date(t1).getUTCFullYear();
-    for (let y = y0; y <= y1; y++) {
+    const yearStep = (window.innerWidth - 80) / Math.max(1, y1 - y0 + 1) < 52 ? 2 : 1;
+    for (let y = y0; y <= y1; y += yearStep) {
       const t = Date.UTC(y, 0, 1);
       put(wxOf((t - t0) / (t1 - t0) * 2000), yB - 20, String(y), 'center');
     }
@@ -1192,22 +1249,61 @@
     }
     pickPanel.style.display = 'block';
     pickPanel.style.pointerEvents = pinned ? 'auto' : 'none';
-    let ax, ay;
+    let ax, aboveY, belowY;
     if (pinned) {
       const a = itemAnchor(pinId);
-      ax = a.x; ay = a.y - R * zoom - 8;
+      ax = a.x + (window.innerWidth - W) / 2;
+      aboveY = a.y - R * zoom - 8;
+      belowY = a.y + R * zoom + 8;
     } else {
-      ax = mx; ay = my - 14;
+      ax = mx;
+      aboveY = my - 14;
+      belowY = my + 14;
     }
+    const placeBelow = aboveY - pickPanel.offsetHeight < 10;
     pickPanel.style.left = ax + 'px';
-    pickPanel.style.top = Math.max(ay, 10) + 'px';
+    pickPanel.style.top = (placeBelow ? belowY : aboveY) + 'px';
+    pickPanel.style.transform = placeBelow ? 'translate(-50%, 0)' : 'translate(-50%, -100%)';
   }
+  new ResizeObserver(() => {
+    if (pickPanel.style.display !== 'none') updatePick(lastMx, lastMy);
+  }).observe(pickPanel);
 
   // ---- interaction ----
   let mode = null, lastX = 0, lastY = 0, downX = 0, downY = 0;
+  const rotateCamera = (dx, dy) => {
+    yaw += dx * 0.008;
+    pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
+    reset();
+  };
+  const rotatePad = document.getElementById('rotatePad');
+  let rotatePadPointer = null, rotatePadX = 0, rotatePadY = 0;
+  rotatePad.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || exporting || previewing) return;
+    setInteractiveRender(true);
+    rotatePadPointer = e.pointerId;
+    rotatePadX = e.clientX;
+    rotatePadY = e.clientY;
+    rotatePad.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  rotatePad.addEventListener('pointermove', e => {
+    if (e.pointerId !== rotatePadPointer || exporting || previewing) return;
+    rotateCamera(e.clientX - rotatePadX, e.clientY - rotatePadY);
+    rotatePadX = e.clientX;
+    rotatePadY = e.clientY;
+  });
+  const stopRotatePad = e => {
+    if (e.pointerId !== rotatePadPointer) return;
+    rotatePadPointer = null;
+    setInteractiveRender(false);
+  };
+  rotatePad.addEventListener('pointerup', stopRotatePad);
+  rotatePad.addEventListener('pointercancel', stopRotatePad);
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     if (exporting || previewing) return;
+    setInteractiveRender(true);
     mode = e.button === 2 ? 'rotate' : 'pan';
     downX = lastX = e.clientX; downY = lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
@@ -1219,14 +1315,11 @@
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
       if (mode === 'pan') { pan.x += dx; pan.y -= dy; }
-      else {
-        yaw += dx * 0.008;
-        pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
-      }
-      reset();
+      else rotateCamera(dx, dy);
+      if (mode === 'pan') reset();
       return;
     }
-    const id = pick(e.clientX, e.clientY);
+    const id = pick(e.clientX - (window.innerWidth - W) / 2, e.clientY);
     canvas.style.cursor = id >= 0 ? 'pointer' : '';
     if (id !== hoverId) {
       hoverId = id;
@@ -1240,15 +1333,24 @@
     const wasPan = mode === 'pan';
     mode = null;
     if (wasPan && Math.hypot(e.clientX - downX, e.clientY - downY) < 5) {
-      pinId = pick(e.clientX, e.clientY);   // -1 on empty space = unpin
+      pinId = pick(e.clientX - (window.innerWidth - W) / 2, e.clientY);   // -1 on empty space = unpin
       reset();
     }
+    setInteractiveRender(false);
   });
+  canvas.addEventListener('pointercancel', () => {
+    mode = null;
+    setInteractiveRender(false);
+  });
+  let wheelRenderTimer = 0;
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     if (exporting || previewing) return;
+    setInteractiveRender(true);
+    clearTimeout(wheelRenderTimer);
+    wheelRenderTimer = setTimeout(() => setInteractiveRender(false), 160);
     const f = Math.pow(1.0015, -e.deltaY);
-    const cx = e.clientX - W / 2, cy = H / 2 - e.clientY;
+    const cx = e.clientX - (window.innerWidth - W) / 2 - W / 2, cy = H / 2 - e.clientY;
     zoom *= f;
     pan.x = cx - (cx - pan.x) * f;
     pan.y = cy - (cy - pan.y) * f;
@@ -1608,9 +1710,22 @@
   }
 
   function resize() {
-    W = window.innerWidth; H = window.innerHeight;
-    canvas.width = W;      // trace at css resolution; hi-dpi would double cost
-    canvas.height = H;
+    W = Math.max(window.innerWidth, window.innerHeight); H = window.innerHeight;
+    RW = Math.max(1, Math.round(W * renderScale));
+    RH = Math.max(1, Math.round(H * renderScale));
+    canvas.width = RW;      // trace at css resolution; hi-dpi would double cost
+    canvas.height = RH;
+    mkTargets();
+    reset();
+  }
+  function setInteractiveRender(active) {
+    const next = active ? (Math.min(window.innerWidth, window.innerHeight) < 700 ? 0.3 : 0.5) : 1;
+    if (next === renderScale) return;
+    renderScale = next;
+    RW = Math.max(1, Math.round(W * renderScale));
+    RH = Math.max(1, Math.round(H * renderScale));
+    canvas.width = RW;
+    canvas.height = RH;
     mkTargets();
     reset();
   }
@@ -1620,7 +1735,7 @@
   // debug hook
   let topIdx = 0;
   for (let i = 0; i < N; i++) if (items[i].score > items[topIdx].score) topIdx = i;
-  window.__pt = { sample: renderSample, spp: () => frame, gl, anchorOf: itemAnchor, topIdx, exportFrames };
+  window.__pt = { sample: renderSample, spp: () => frame, camera: () => ({ yaw, pitch }), gl, anchorOf: itemAnchor, topIdx, exportFrames };
 })();
 </script>
 </body>

@@ -575,7 +575,8 @@
     const spanYears = (hi - lo) / 3.156e10;
     const out = [];
     if (spanYears > 2.5) {
-      const step = spanYears > 16 ? 2 : 1;
+      const yearSpacing = (W - M.left - M.right) / Math.max(1, Math.ceil(spanYears));
+      const step = spanYears > 16 || yearSpacing < 52 ? 2 : 1;
       const y0 = new Date(lo).getUTCFullYear();
       const y1 = new Date(hi).getUTCFullYear() + 1;
       for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
