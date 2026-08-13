@@ -13,6 +13,7 @@
     width: max(100vw, 100vh); height: 100%;
     transform: translateX(-50%);
     cursor: grab;
+    touch-action: none;
   }
   #hint {
     position: fixed; right: 14px; bottom: 10px;
@@ -21,32 +22,36 @@
   #rotatePad {
     position: fixed; top: 14px; right: 14px;
     z-index: 6;
-    width: 68px; height: 68px;
+    width: 72px; height: 72px;
     padding: 0;
     border: 1px solid rgba(11, 11, 11, 0.24);
-    border-radius: 50%;
-    background:
-      radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), rgba(220, 220, 216, 0.78) 55%, rgba(150, 150, 145, 0.72));
+    border-radius: 12px;
+    background: rgba(252, 252, 251, 0.86);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
     cursor: grab;
     touch-action: none;
+    perspective: 160px;
   }
   #rotatePad:active { cursor: grabbing; }
-  #rotatePad::before, #rotatePad::after {
-    content: "";
+  #rotatePad .viewCube {
     position: absolute;
-    inset: 11px 5px;
-    border: 1px solid rgba(50, 50, 48, 0.48);
-    border-radius: 50%;
+    left: 19px; top: 19px;
+    width: 32px; height: 32px;
+    transform-style: preserve-3d;
+    pointer-events: none;
   }
-  #rotatePad::after {
-    inset: 5px 11px;
-  }
-  #rotatePad span {
+  #rotatePad .viewCube i {
     position: absolute;
-    left: 8px; right: 8px; top: 50%;
-    border-top: 1px solid rgba(50, 50, 48, 0.48);
+    inset: 0;
+    border: 1px solid rgba(42, 42, 40, 0.5);
+    background: rgba(142, 158, 172, 0.72);
   }
+  #rotatePad .front { transform: translateZ(16px); }
+  #rotatePad .back { transform: rotateY(180deg) translateZ(16px); }
+  #rotatePad .right { transform: rotateY(90deg) translateZ(16px); background: rgba(112, 132, 150, 0.76); }
+  #rotatePad .left { transform: rotateY(-90deg) translateZ(16px); background: rgba(112, 132, 150, 0.76); }
+  #rotatePad .top { transform: rotateX(90deg) translateZ(16px); background: rgba(190, 201, 210, 0.82); }
+  #rotatePad .bottom { transform: rotateX(-90deg) translateZ(16px); background: rgba(82, 98, 112, 0.78); }
   #back2d {
     position: fixed; top: 10px; left: 14px;
     z-index: 6;
@@ -175,7 +180,12 @@
 <canvas id="gl"></canvas>
 <a id="back2d" href="index.html">2D View</a>
 <div id="hint">rendering 0%</div>
-<button id="rotatePad" type="button" aria-label="Rotate view" title="Drag to rotate view"><span></span></button>
+<button id="rotatePad" type="button" aria-label="Rotate view" title="Drag to rotate view">
+  <span class="viewCube" aria-hidden="true">
+    <i class="front"></i><i class="back"></i><i class="right"></i>
+    <i class="left"></i><i class="top"></i><i class="bottom"></i>
+  </span>
+</button>
 <div id="pick"></div>
 <div id="panel" class="closed">
   <div id="panelHead">tuning <span id="panelArrow">▸</span></div>
@@ -1274,13 +1284,22 @@
   const rotateCamera = (dx, dy) => {
     yaw += dx * 0.008;
     pitch = Math.max(-1.4, Math.min(1.4, pitch + dy * 0.008));
+    syncRotatePad();
     reset();
   };
   const rotatePad = document.getElementById('rotatePad');
+  const viewCube = rotatePad.querySelector('.viewCube');
+  let viewCubeTransform = '';
+  function syncRotatePad() {
+    const transform = `rotateX(${pitch}rad) rotateY(${-yaw}rad)`;
+    if (transform === viewCubeTransform) return;
+    viewCubeTransform = transform;
+    viewCube.style.transform = transform;
+  }
+  syncRotatePad();
   let rotatePadPointer = null, rotatePadX = 0, rotatePadY = 0;
   rotatePad.addEventListener('pointerdown', e => {
     if (e.button !== 0 || exporting || previewing) return;
-    setInteractiveRender(true);
     rotatePadPointer = e.pointerId;
     rotatePadX = e.clientX;
     rotatePadY = e.clientY;
@@ -1296,15 +1315,14 @@
   const stopRotatePad = e => {
     if (e.pointerId !== rotatePadPointer) return;
     rotatePadPointer = null;
-    setInteractiveRender(false);
   };
   rotatePad.addEventListener('pointerup', stopRotatePad);
   rotatePad.addEventListener('pointercancel', stopRotatePad);
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     if (exporting || previewing) return;
-    setInteractiveRender(true);
     mode = e.button === 2 ? 'rotate' : 'pan';
+    if (mode === 'pan') setInteractiveRender(true);
     downX = lastX = e.clientX; downY = lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
@@ -1735,7 +1753,7 @@
   // debug hook
   let topIdx = 0;
   for (let i = 0; i < N; i++) if (items[i].score > items[topIdx].score) topIdx = i;
-  window.__pt = { sample: renderSample, spp: () => frame, camera: () => ({ yaw, pitch }), gl, anchorOf: itemAnchor, topIdx, exportFrames };
+  window.__pt = { sample: renderSample, spp: () => frame, camera: () => ({ yaw, pitch, pan: { ...pan } }), gl, anchorOf: itemAnchor, topIdx, exportFrames };
 })();
 </script>
 </body>
