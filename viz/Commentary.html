@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commentary Timeline</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --text: #0b0b0b;
+    --secondary: #52514e;
+    --border: rgba(11, 11, 11, 0.1);
+    --accent: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --text: #fff;
+      --secondary: #c3c2b7;
+      --border: rgba(255, 255, 255, 0.1);
+      --accent: #3987e5;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+  body { background: var(--surface); font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; cursor: default; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="timeline" aria-label="Commentary timeline"></canvas>
+<script src="data.js"></script>
+<script src="import/dataset-store.js"></script>
+<script src="timeline-insights.js"></script>
+<script>
+(async () => {
+  const canvas = document.getElementById('timeline');
+  const ctx = canvas.getContext('2d');
+  const insights = await RedditTimelineInsights.load();
+  const sourceData = await RedditDataset.getActive(REDDIT_DATA);
+  const times = sourceData.map(item =>
+    Date.parse(item.date.replace(' UTC', 'Z').replace(' ', 'T'))
+  ).filter(Number.isFinite);
+  const t0 = Math.min(...times);
+  const t1 = Math.max(...times);
+  const pad = (t1 - t0) * 0.02 || 1;
+  let viewMin = t0 - pad;
+  let viewMax = t1 + pad;
+  let width = 0;
+  let height = 0;
+  let dpr = 1;
+  let hovered = -1;
+  let pinned = -1;
+  const sectionColors = ['#e76f51', '#f4a261', '#2a9d8f', '#6c63ff', '#d45087'];
+  const barHeight = 10;
+  const margin = { left: 56, right: 8, top: 10, bottom: 10 };
+
+  const color = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const xFor = time => margin.left +
+    (time - viewMin) / (viewMax - viewMin) * (width - margin.left - margin.right);
+  const timeFor = x => viewMin +
+    (x - margin.left) / (width - margin.left - margin.right) * (viewMax - viewMin);
+
+  function sectionAt(x, y) {
+    const top = (height - barHeight) / 2;
+    const bottom = top + barHeight;
+    if (x < margin.left || x > width - margin.right ||
+        y < top || y > bottom) return -1;
+    const time = timeFor(x);
+    return insights.findIndex(insight =>
+      time >= insight.start && time < Math.min(insight.end, t1 + 1));
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const top = (height - barHeight) / 2;
+    const bottom = top + barHeight;
+    for (let i = 0; i < insights.length; i++) {
+      const insight = insights[i];
+      const x0 = Math.max(margin.left, xFor(insight.start));
+      const x1 = Math.min(width - margin.right, xFor(Math.min(insight.end, t1)));
+      if (x1 <= x0) continue;
+      ctx.globalAlpha = i === hovered || i === pinned ? 1 : 0.72;
+      ctx.fillStyle = sectionColors[i];
+      ctx.beginPath();
+      ctx.roundRect(x0, top, x1 - x0, bottom - top, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function publishFocus(index) {
+    const insight = index >= 0 ? insights[index] : null;
+    parent.postMessage({
+      type: 'reddit-data-commentary-focus',
+      focus: insight ? {
+        start: insight.start,
+        end: Math.min(insight.end, t1),
+        color: sectionColors[index],
+        viewMin,
+        viewMax,
+      } : null,
+    }, location.origin === 'null' ? '*' : location.origin);
+  }
+
+  function publishDetail(index, isPinned, pointerY) {
+    const insight = index >= 0 ? insights[index] : null;
+    parent.postMessage({
+      type: 'reddit-data-post-detail',
+      pinned: isPinned,
+      pointerY,
+      detail: insight ? {
+        kind: 'insight',
+        year: insight.year,
+        body: insight.body,
+        image: insight.image,
+      } : null,
+    }, location.origin === 'null' ? '*' : location.origin);
+  }
+
+  canvas.addEventListener('pointermove', event => {
+    const rect = canvas.getBoundingClientRect();
+    const index = sectionAt(event.clientX - rect.left, event.clientY - rect.top);
+    canvas.style.cursor = index >= 0 ? 'pointer' : '';
+    if (index === hovered) return;
+    hovered = index;
+    if (pinned < 0) {
+      publishDetail(index, false, event.clientY);
+      publishFocus(index);
+    }
+    requestAnimationFrame(draw);
+  });
+
+  canvas.addEventListener('pointerdown', event => {
+    const rect = canvas.getBoundingClientRect();
+    pinned = sectionAt(event.clientX - rect.left, event.clientY - rect.top);
+    publishDetail(pinned, pinned >= 0, event.clientY);
+    publishFocus(pinned);
+    requestAnimationFrame(draw);
+  });
+
+  canvas.addEventListener('pointerleave', () => {
+    hovered = -1;
+    if (pinned < 0) {
+      publishDetail(-1, false, null);
+      publishFocus(-1);
+    }
+    requestAnimationFrame(draw);
+  });
+
+  canvas.addEventListener('wheel', event => {
+    event.preventDefault();
+    parent.postMessage({
+      type: 'reddit-data-page-scroll',
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode,
+    }, location.origin === 'null' ? '*' : location.origin);
+  }, { passive: false });
+
+  window.addEventListener('message', event => {
+    if (event.source !== parent || event.origin !== location.origin ||
+        event.data?.type !== 'reddit-data-timeline-view') return;
+    const min = Number(event.data.min);
+    const max = Number(event.data.max);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
+    viewMin = min;
+    viewMax = max;
+    publishFocus(pinned >= 0 ? pinned : hovered);
+    requestAnimationFrame(draw);
+  });
+
+  new ResizeObserver(entries => {
+    const rect = entries[0].contentRect;
+    width = Math.max(1, rect.width);
+    height = Math.max(1, rect.height);
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    requestAnimationFrame(draw);
+  }).observe(canvas);
+})();
+</script>
+</body>
+</html>

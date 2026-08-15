@@ -12,6 +12,7 @@
     --text: #0b0b0b;
     --secondary: #52514e;
     --muted: #898781;
+    --control-accent: #5f5e5a;
     --border: rgba(11, 11, 11, 0.10);
     --accent: #2a78d6;
   }
@@ -23,6 +24,7 @@
       --text: #fff;
       --secondary: #c3c2b7;
       --muted: #898781;
+      --control-accent: #b0aea7;
       --border: rgba(255, 255, 255, 0.10);
       --accent: #3987e5;
     }
@@ -56,13 +58,16 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
+    padding: 4px 0;
   }
-  .section-header .section-heading { flex: 1; }
+  .section-header .section-heading { flex: 0 0 auto; }
+  .section-view-link { margin-left: 4px; }
   .panel-controls {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding-right: 16px;
+    gap: 4px;
+    padding-right: 8px;
+    margin-left: auto;
     color: var(--secondary);
     font-size: 13px;
     opacity: 0;
@@ -70,7 +75,8 @@
     transition: opacity 120ms ease;
   }
   .section:hover .panel-controls,
-  .section:focus-within .panel-controls {
+  .section:focus-within .panel-controls,
+  .persistent-controls .panel-controls {
     opacity: 1;
     pointer-events: auto;
   }
@@ -97,7 +103,8 @@
     transition: opacity 120ms ease;
   }
   .section:hover .zoom-slider,
-  .section:focus-within .zoom-slider {
+  .section:focus-within .zoom-slider,
+  .persistent-controls .zoom-slider {
     opacity: 1;
     pointer-events: auto;
   }
@@ -114,6 +121,22 @@
     cursor: pointer;
   }
   .control:hover { border-color: var(--muted); }
+  .zoom-control {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 3px;
+  }
+  .zoom-control svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 1.8;
+  }
   .smoothing {
     display: flex;
     align-items: center;
@@ -124,6 +147,9 @@
   .smoothing input {
     width: min(220px, 28vw);
     accent-color: var(--accent);
+  }
+  [data-controls-for="subreddits"] input {
+    accent-color: var(--control-accent);
   }
   #smoothVal { min-width: 52px; }
   main {
@@ -139,18 +165,18 @@
   .section-heading {
     display: flex;
     align-items: center;
-    width: 100%;
+    width: auto;
     margin: 0;
-    padding: 12px 16px;
+    padding: 4px 12px;
     color: var(--text);
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 650;
   }
   .section-body {
     height: var(--section-height);
   }
   .section-resizer {
-    height: 10px;
+    height: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -175,6 +201,13 @@
     height: 100%;
     border: 0;
   }
+  #commentaryFocusBand {
+    position: fixed;
+    z-index: 10;
+    display: none;
+    pointer-events: none;
+    opacity: 0.1;
+  }
   #postDetail {
     position: fixed;
     z-index: 100;
@@ -195,6 +228,25 @@
     top: 16px;
     bottom: auto;
   }
+  #postDetail[data-kind="commentary"],
+  #postDetail[data-kind="subreddit-commentary"] {
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+  }
+  #postDetail[data-kind="subreddit-commentary"] {
+    pointer-events: none;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+  #postDetail[data-kind="subreddit-commentary"] .meta {
+    margin-bottom: 3px;
+  }
+  #postDetail[data-kind="subreddit-commentary"] .score {
+    font-size: 15px;
+  }
+  #postDetail[data-kind="subreddit-commentary"] .body p {
+    margin-bottom: 3px;
+  }
   #postDetail[hidden] { display: none; }
   #postDetail .meta {
     display: flex;
@@ -207,6 +259,14 @@
   #postDetail .secondary { color: var(--secondary); }
   #postDetail .title { margin-bottom: 4px; font-weight: 600; }
   #postDetail .thread { margin-bottom: 4px; color: var(--secondary); font-weight: 600; }
+  #postDetail .insight-image {
+    float: left;
+    width: 108px;
+    max-height: 108px;
+    margin: 0 14px 8px 0;
+    border-radius: 6px;
+    object-fit: cover;
+  }
   #postDetail .body { color: var(--secondary); overflow-wrap: break-word; }
   #postDetail .body p { margin: 0 0 6px; }
   #postDetail .body p:last-child { margin-bottom: 0; }
@@ -274,39 +334,49 @@
   </div>
 </header>
 <main>
-  <section class="section">
+  <section class="section persistent-controls">
     <div class="section-header">
       <h2 class="section-heading" title="Posting activity over time">Posts</h2>
+      <a class="control section-view-link" href="Posts3dView.html" title="GPU-intensive 3D view">3D View</a>
       <div class="panel-controls" data-controls-for="posts" aria-label="Posts controls">
         <button class="control scale-control" type="button" data-frame="Posts" data-axis="Score" data-log="true">Score: log</button>
-        <a class="control" href="Posts3dView.html" title="GPU-intensive 3D view">3D View</a>
+        <button class="control zoom-control" id="zoomInAll" type="button" aria-label="Zoom in all visualizations" title="Zoom in all visualizations">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10" cy="10" r="6.5"></circle>
+            <path d="M15 15l5 5M10 6.8v6.4M6.8 10h6.4"></path>
+          </svg>
+        </button>
+        <button class="control zoom-control" id="zoomOutAll" type="button" aria-label="Zoom out all visualizations" title="Zoom out all visualizations">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10" cy="10" r="6.5"></circle>
+            <path d="M15 15l5 5M6.8 10h6.4"></path>
+          </svg>
+        </button>
       </div>
     </div>
-    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
-        data-frame="Posts" aria-label="Posts zoom">
     <div class="section-body" id="posts" data-default-half style="--section-height: 50vh">
       <iframe title="Posts" src="chart.html?embed=1&amp;view=time" loading="eager"></iframe>
     </div>
-    <div class="section-resizer" data-resizer-for="posts" role="separator" tabindex="0"
-        aria-label="Resize Posts section" title="Drag to resize"></div>
   </section>
-  <section class="section">
+  <section class="section" id="commentarySection">
+    <div class="section-body" id="commentary" style="--section-height: 10px">
+      <iframe title="Commentary" src="Commentary.html" loading="eager"></iframe>
+    </div>
+  </section>
+  <section class="section persistent-controls">
     <div class="section-header">
       <h2 class="section-heading" title="Subreddit activity over time">Subreddit Distribution</h2>
+      <a class="control section-view-link" href="SubredditDistribution3dView.html" title="GPU-intensive 3D view">3D View</a>
       <div class="panel-controls" data-controls-for="subreddits" aria-label="Subreddit Distribution controls">
         <label><input type="radio" name="subredditMetric" value="posts" checked>Posts</label>
         <label><input type="radio" name="subredditMetric" value="score">Score</label>
         <label><input type="checkbox" id="subredditNormalized">normalized</label>
         <label class="smoothing">
-          <span>Smoothing</span>
           <input type="range" id="smoothSlider" min="0" max="100" value="54">
           <span id="smoothVal">~30 wk</span>
         </label>
-        <a class="control" href="SubredditDistribution3dView.html" title="GPU-intensive 3D view">3D View</a>
       </div>
     </div>
-    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
-        data-frame="Subreddit Distribution" aria-label="Subreddit Distribution zoom">
     <div class="section-body" id="subreddits" data-default-half style="--section-height: 50vh">
       <iframe title="Subreddit Distribution" src="chart.html?embed=1&amp;view=sdist" loading="eager"></iframe>
     </div>
@@ -317,8 +387,6 @@
     <div class="section-header">
       <h2 class="section-heading" title="Weekly posting and score metrics">Trends</h2>
     </div>
-    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
-        data-frame="Trends" aria-label="Trends zoom">
     <div class="section-body" id="trends" style="--section-height: 720px">
       <iframe title="Trends" src="chart.html?embed=1&amp;view=trends" loading="eager"></iframe>
     </div>
@@ -332,8 +400,6 @@
         <button class="control scale-control" type="button" data-frame="Score Distribution" data-axis="Score" data-log="true">Score: log</button>
       </div>
     </div>
-    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
-        data-frame="Score Distribution" aria-label="Score Distribution zoom">
     <div class="section-body" id="scores" style="--section-height: 620px">
       <iframe title="Score Distribution" src="chart.html?embed=1&amp;view=dist" loading="eager"></iframe>
     </div>
@@ -347,8 +413,6 @@
         <button class="control scale-control" type="button" data-frame="Post Length Distribution" data-axis="Length" data-log="true">Length: log</button>
       </div>
     </div>
-    <input class="zoom-slider" type="range" min="-100" max="100" value="0" step="1"
-        data-frame="Post Length Distribution" aria-label="Post Length Distribution zoom">
     <div class="section-body" id="lengths" style="--section-height: 620px">
       <iframe title="Post Length Distribution" src="chart.html?embed=1&amp;view=ldist" loading="eager"></iframe>
     </div>
@@ -356,6 +420,7 @@
         aria-label="Resize Post Length Distribution section" title="Drag to resize"></div>
   </section>
 </main>
+<div id="commentaryFocusBand" aria-hidden="true"></div>
 <aside id="postDetail" aria-live="polite" hidden></aside>
 <dialog class="import-dialog" id="importDialog" aria-labelledby="importTitle">
   <div class="import-dialog-head">
@@ -401,15 +466,96 @@
   const value = document.getElementById('smoothVal');
   const frames = [...document.querySelectorAll('iframe')];
   const postsFrame = frames.find(frame => frame.title === 'Posts');
+  const commentaryFrame = frames.find(frame => frame.title === 'Commentary');
   const subredditFrame = frames.find(frame => frame.title === 'Subreddit Distribution');
   const timelineFrames = frames.filter(frame =>
-    ['Posts', 'Subreddit Distribution', 'Trends'].includes(frame.title)
+    ['Posts', 'Commentary', 'Subreddit Distribution', 'Trends'].includes(frame.title)
   );
   const detailFrames = frames.filter(frame =>
-    ['Posts', 'Score Distribution', 'Post Length Distribution'].includes(frame.title)
+    ['Posts', 'Commentary', 'Score Distribution', 'Post Length Distribution'].includes(frame.title)
   );
   const postDetail = document.getElementById('postDetail');
+  const commentaryFocusBand = document.getElementById('commentaryFocusBand');
+  let commentaryFocus = null;
+  let shownSubredditInsight = null;
   let postDetailToken = 0;
+
+  function positionCommentaryDetail() {
+    if (postDetail.hidden || postDetail.dataset.kind !== 'commentary') return;
+    const postsRect = postsFrame.getBoundingClientRect();
+    const commentaryRect = commentaryFrame.getBoundingClientRect();
+    postDetail.style.top = 'auto';
+    postDetail.style.bottom = Math.max(0, window.innerHeight - commentaryRect.top + 4) + 'px';
+    postDetail.style.height = 'auto';
+    postDetail.style.maxHeight = Math.max(120, commentaryRect.top - postsRect.top - 8) + 'px';
+  }
+
+  function showSubredditInsight(message) {
+    if (!message.detail) {
+      if (postDetail.dataset.kind === 'subreddit-commentary') postDetail.hidden = true;
+      shownSubredditInsight = null;
+      return;
+    }
+    if (shownSubredditInsight !== message.detail.subreddit ||
+        postDetail.dataset.kind !== 'subreddit-commentary') {
+      ++postDetailToken;
+      postDetail.replaceChildren();
+      postDetail.hidden = false;
+      postDetail.dataset.kind = 'subreddit-commentary';
+      shownSubredditInsight = message.detail.subreddit;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      addText(meta, 'span', 'score', message.detail.subreddit);
+      postDetail.append(meta, RedditPostContent.renderMarkdown(message.detail.body));
+    }
+    delete postDetail.dataset.position;
+    postDetail.style.top = 'auto';
+    postDetail.style.right = 'auto';
+    postDetail.style.bottom = 'auto';
+    postDetail.style.left = 'auto';
+    postDetail.style.height = 'auto';
+    postDetail.style.width = Math.min(640, window.innerWidth - 40) + 'px';
+    postDetail.style.maxHeight = Math.max(140, window.innerHeight - 40) + 'px';
+
+    const frameRect = subredditFrame.getBoundingClientRect();
+    const anchorX = frameRect.left + Number(message.pointerX);
+    const anchorY = frameRect.top + Number(message.pointerY);
+    const panelRect = postDetail.getBoundingClientRect();
+    const left = Math.max(20, Math.min(window.innerWidth - panelRect.width - 20,
+      anchorX - panelRect.width / 2));
+    const top = anchorY - panelRect.height - 14 >= 10
+      ? anchorY - panelRect.height - 14
+      : Math.min(window.innerHeight - panelRect.height - 10, anchorY + 14);
+    postDetail.style.left = left + 'px';
+    postDetail.style.top = Math.max(10, top) + 'px';
+  }
+
+  function positionCommentaryFocusBand() {
+    if (!commentaryFocus) {
+      commentaryFocusBand.style.display = 'none';
+      return;
+    }
+    const postsRect = postsFrame.getBoundingClientRect();
+    const commentaryRect = commentaryFrame.getBoundingClientRect();
+    const subredditRect = subredditFrame.getBoundingClientRect();
+    const plotLeft = commentaryRect.left + 56;
+    const plotWidth = commentaryRect.width - 56 - 8;
+    const span = commentaryFocus.viewMax - commentaryFocus.viewMin;
+    const x0 = plotLeft + (commentaryFocus.start - commentaryFocus.viewMin) / span * plotWidth;
+    const x1 = plotLeft + (commentaryFocus.end - commentaryFocus.viewMin) / span * plotWidth;
+    const left = Math.max(plotLeft, x0);
+    const right = Math.min(plotLeft + plotWidth, x1);
+    if (right <= left) {
+      commentaryFocusBand.style.display = 'none';
+      return;
+    }
+    commentaryFocusBand.style.display = 'block';
+    commentaryFocusBand.style.left = left + 'px';
+    commentaryFocusBand.style.top = postsRect.top + 'px';
+    commentaryFocusBand.style.width = (right - left) + 'px';
+    commentaryFocusBand.style.height = (subredditRect.bottom - postsRect.top) + 'px';
+    commentaryFocusBand.style.background = commentaryFocus.color;
+  }
 
   function smoothingLabel(v) {
     if (v === 0) return 'off';
@@ -438,6 +584,18 @@
       value: controlValue,
     }, location.origin === 'null' ? '*' : location.origin);
   }
+
+  function zoomAll(factor) {
+    for (const frame of frames) {
+      frame.contentWindow.postMessage({
+        type: 'reddit-data-control',
+        action: 'zoom',
+        value: factor,
+      }, location.origin === 'null' ? '*' : location.origin);
+    }
+  }
+  document.getElementById('zoomInAll').addEventListener('click', () => zoomAll(1.25));
+  document.getElementById('zoomOutAll').addEventListener('click', () => zoomAll(0.8));
 
   for (const radio of document.querySelectorAll('input[name="subredditMetric"]')) {
     radio.addEventListener('change', () => {
@@ -497,18 +655,68 @@
       postsFrame.contentWindow.postMessage(e.data, location.origin === 'null' ? '*' : location.origin);
       return;
     }
+    if (e.data?.type === 'reddit-data-subreddit-insight' &&
+        e.source === subredditFrame.contentWindow) {
+      showSubredditInsight(e.data);
+      return;
+    }
+    if (e.data?.type === 'reddit-data-commentary-focus' &&
+        e.source === commentaryFrame.contentWindow) {
+      const focus = e.data.focus;
+      commentaryFocus = focus &&
+        Number.isFinite(Number(focus.start)) &&
+        Number.isFinite(Number(focus.end)) &&
+        Number.isFinite(Number(focus.viewMin)) &&
+        Number.isFinite(Number(focus.viewMax)) &&
+        Number(focus.viewMax) > Number(focus.viewMin) &&
+        typeof focus.color === 'string'
+        ? {
+            start: Number(focus.start),
+            end: Number(focus.end),
+            viewMin: Number(focus.viewMin),
+            viewMax: Number(focus.viewMax),
+            color: focus.color,
+          }
+        : null;
+      positionCommentaryFocusBand();
+      return;
+    }
     const sourceFrame = detailFrames.find(frame => frame.contentWindow === e.source);
     if (!sourceFrame || e.data?.type !== 'reddit-data-post-detail') return;
     const d = e.data.detail;
+    if (!d && postDetail.dataset.kind === 'subreddit-commentary') return;
     const token = ++postDetailToken;
+    shownSubredditInsight = null;
     postDetail.replaceChildren();
     postDetail.hidden = !d;
     if (!d) return;
+    postDetail.dataset.kind = d.kind === 'insight' ? 'commentary' : 'post';
+    postDetail.style.removeProperty('top');
+    postDetail.style.removeProperty('bottom');
+    postDetail.style.removeProperty('left');
+    postDetail.style.removeProperty('right');
+    postDetail.style.removeProperty('width');
+    postDetail.style.removeProperty('height');
+    postDetail.style.removeProperty('max-height');
     const cursorY = e.data.pointerY === null
       ? null
       : sourceFrame.getBoundingClientRect().top + e.data.pointerY;
     const bottomPanelTop = window.innerHeight - 16 - postDetail.offsetHeight;
     postDetail.dataset.position = cursorY !== null && cursorY >= bottomPanelTop - 12 ? 'top' : 'bottom';
+
+    if (d.kind === 'insight') {
+      positionCommentaryDetail();
+      const image = document.createElement('img');
+      image.className = 'insight-image';
+      image.src = d.image;
+      image.alt = `${d.year} timeline insight`;
+      postDetail.append(image);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      addText(meta, 'span', 'score', String(d.year));
+      postDetail.append(meta, RedditPostContent.renderMarkdown(d.body));
+      return;
+    }
 
     const meta = document.createElement('div');
     meta.className = 'meta';
@@ -552,14 +760,43 @@
   });
 
   function setDefaultHalfHeights() {
-    for (const body of document.querySelectorAll('[data-default-half]')) {
+    const pageHeaderHeight = document.querySelector('.page-header').offsetHeight;
+    const commentaryHeight = document.getElementById('commentary').offsetHeight;
+    const timelineSections = ['posts', 'subreddits'].map(id => document.getElementById(id));
+    const sectionHeaderHeight = timelineSections.reduce((sum, body) =>
+      sum + body.closest('.section').querySelector('.section-header').offsetHeight, 0);
+    const availableHeight = window.innerHeight - pageHeaderHeight - commentaryHeight - sectionHeaderHeight;
+    const defaultHeight = Math.max(300, Math.min(600, availableHeight / 2));
+    for (const body of timelineSections) {
       if (body.dataset.userResized === 'true') continue;
-      const headerHeight = body.closest('.section').querySelector('.section-header').offsetHeight;
-      body.style.height = Math.max(220, window.innerHeight / 2 - headerHeight - 10) + 'px';
+      body.style.height = defaultHeight + 'px';
     }
   }
   setDefaultHalfHeights();
-  window.addEventListener('resize', setDefaultHalfHeights);
+  window.addEventListener('resize', () => {
+    setDefaultHalfHeights();
+    positionCommentaryFocusBand();
+    positionCommentaryDetail();
+  });
+  window.addEventListener('scroll', () => {
+    positionCommentaryFocusBand();
+    positionCommentaryDetail();
+  }, { passive: true });
+  window.addEventListener('reddit-data-dataset-status', event => {
+    if (event.detail?.imported) {
+      commentaryFocus = null;
+      commentaryFocusBand.style.display = 'none';
+      if (postDetail.dataset.kind === 'commentary') postDetail.hidden = true;
+    }
+    setDefaultHalfHeights();
+  });
+  const focusBandResizeObserver = new ResizeObserver(positionCommentaryFocusBand);
+  for (const frame of [postsFrame, commentaryFrame, subredditFrame]) {
+    focusBandResizeObserver.observe(frame);
+  }
+  const commentaryDetailResizeObserver = new ResizeObserver(positionCommentaryDetail);
+  commentaryDetailResizeObserver.observe(postsFrame);
+  commentaryDetailResizeObserver.observe(commentaryFrame);
 
   for (const handle of document.querySelectorAll('.section-resizer')) {
     const body = document.getElementById(handle.dataset.resizerFor);
@@ -576,7 +813,7 @@
     });
     handle.addEventListener('pointermove', e => {
       if (!resizing) return;
-      body.style.height = Math.max(220, startHeight + e.clientY - startY) + 'px';
+      body.style.height = Math.max(300, Math.min(600, startHeight + e.clientY - startY)) + 'px';
     });
     const stopResize = () => {
       resizing = false;
@@ -588,7 +825,8 @@
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
       body.dataset.userResized = 'true';
       const delta = e.key === 'ArrowUp' ? -20 : 20;
-      body.style.height = Math.max(220, body.getBoundingClientRect().height + delta) + 'px';
+      body.style.height = Math.max(300, Math.min(600,
+        body.getBoundingClientRect().height + delta)) + 'px';
       e.preventDefault();
     });
   }

@@ -279,6 +279,7 @@
 <script src="data.js"></script>
 <script src="import/dataset-store.js"></script>
 <script src="post-content.js"></script>
+<script src="subreddit-insights.js"></script>
 <script>
 (async () => {
   const params = new URLSearchParams(location.search);
@@ -291,7 +292,15 @@
   const scaleToggle = document.getElementById('scaleToggle');
 
   // ---- data prep ----
-  const sourceData = await RedditDataset.getActive(REDDIT_DATA);
+  const [sourceData, datasetStatus] = await Promise.all([
+    RedditDataset.getActive(REDDIT_DATA),
+    RedditDataset.getStatus(),
+  ]);
+  const subredditInsights = datasetStatus.imported
+    ? new Map()
+    : await RedditSubredditInsights.load();
+  const subredditInsight = name =>
+    subredditInsights.get(RedditSubredditInsights.normalize(name)) || null;
   const items = sourceData.map(d => ({
     ...d,
     scoreAvailable: d.score !== null && d.score !== undefined && Number.isFinite(+d.score),
@@ -426,7 +435,7 @@
   const yvRaw = d => (mode === 'ltime' || mode === 'ldist') ? d.len : d.score;
   const yv = d => useLog ? symlog(yvRaw(d)) : yvRaw(d);
 
-  const M = { left: 56, right: 24, top: 28, bottom: 40 };
+  const M = { left: 56, right: 8, top: 28, bottom: 8 };
   let W = 0, H = 0, dpr = 1;
 
   // base (untransformed) data->pixel mapping, recomputed on resize / scale change
@@ -626,8 +635,10 @@
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    for (const t of xTicks()) {
-      ctx.fillText(t.label, Math.round(xPix(t.v)) + 0.5, H - M.bottom + 8);
+    if (mode !== 'time' && mode !== 'ltime') {
+      for (const t of xTicks()) {
+        ctx.fillText(t.label, Math.round(xPix(t.v)) + 0.5, H - M.bottom + 8);
+      }
     }
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
@@ -792,7 +803,14 @@
         }
         flush();
         // in-band labels for the top 10 subreddits (and any selected band)
-        if ((k < 10 || k === sdistSelBand) && best.share > 0.04) labelSpots.push({ ...best, name: subName(k) });
+        const insight = subredditInsight(subName(k));
+        if ((k < 10 || k === sdistSelBand || insight) &&
+            best.share > (insight ? 0.018 : 0.04)) {
+          labelSpots.push({
+            ...best,
+            name: subName(k) + (insight ? ' ★' : ''),
+          });
+        }
       }
       ctx.globalAlpha = 1;
       ctx.font = '600 12px system-ui, sans-serif';
@@ -969,6 +987,7 @@
         const dx = Math.abs(mx - d.px);
         if (dx < bestDx) { bestDx = dx; best = d; }
       }
+
       return best;
     }
     for (const d of scatterItems()) {
@@ -1030,9 +1049,31 @@
   }
   function sdistHover(mx, my, cx, cy) {
     const hit = sdistBandAt(mx, my);
-    if (!hit) { setSdistHoverBand(-1); sdistDefault(); return; }
+    if (!hit) {
+      setSdistHoverBand(-1);
+      sdistDefault();
+      if (isEmbedded) {
+        parent.postMessage({
+          type: 'reddit-data-subreddit-insight',
+          detail: null,
+        }, location.origin === 'null' ? '*' : location.origin);
+      }
+      return;
+    }
     const { w, band, share } = hit;
     setSdistHoverBand(band);
+    const insight = subredditInsight(subName(band));
+    if (isEmbedded) {
+      parent.postMessage({
+        type: 'reddit-data-subreddit-insight',
+        pointerX: cx,
+        pointerY: cy,
+        detail: insight ? {
+          subreddit: subName(band),
+          body: insight.body,
+        } : null,
+      }, location.origin === 'null' ? '*' : location.origin);
+    }
     const score = sdistMetric === 'score';
     detail.replaceChildren();
     const meta = el('div', 'meta');
@@ -1125,7 +1166,16 @@
   canvas.addEventListener('pointerleave', () => {
     hovered = null;
     tip.style.display = 'none';
-    if (mode === 'sdist') { setSdistHoverBand(-1); sdistDefault(); }
+    if (mode === 'sdist') {
+      setSdistHoverBand(-1);
+      sdistDefault();
+      if (isEmbedded) {
+        parent.postMessage({
+          type: 'reddit-data-subreddit-insight',
+          detail: null,
+        }, location.origin === 'null' ? '*' : location.origin);
+      }
+    }
     else if (mode === 'trends') trendsClear();
     else if (!pinned) showDetail(null, false);
     requestAnimationFrame(draw);
@@ -1351,6 +1401,7 @@
     if (m === 'ltime') ryLen.checked = true;
     // the title names the active view; the right-side tabs list the others
     const scatter = m === 'time' || m === 'ltime';
+    M.bottom = scatter ? 8 : 40;
     viewTitle.textContent = scatter ? 'Posts'
       : m === 'trends' ? 'Trends'
       : m === 'dist' ? 'Score distribution'

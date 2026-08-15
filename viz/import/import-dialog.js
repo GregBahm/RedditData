@@ -12,6 +12,7 @@
   const stateActions = document.getElementById('importStateActions');
   const status = document.getElementById('datasetStatus');
   const pageTitle = document.getElementById('pageTitle');
+  const commentarySection = document.getElementById('commentarySection');
   let processing = false;
   let controller = null;
   let parsedRecords = null;
@@ -59,6 +60,8 @@
   async function updateDatasetStatus() {
     const current = await RedditDataset.getStatus();
     clearButton.hidden = !current.imported;
+    commentarySection.hidden = current.imported;
+    window.dispatchEvent(new CustomEvent('reddit-data-dataset-status', { detail: current }));
     status.textContent = current.imported
       ? `${current.count.toLocaleString()} personal records active`
       : 'Showing the built-in demo data';
