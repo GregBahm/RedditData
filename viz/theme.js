@@ -1,6 +1,14 @@
 (() => {
   const STORAGE_KEY = 'reddit-data-theme';
-  const THEMES = ['basic', 'dark', 'minimalistic', 'bauhaus', 'neumorphic', 'brutalist'];
+  const THEMES = [
+    'basic',
+    'dark',
+    'minimalistic',
+    'bauhaus',
+    'neumorphic',
+    'dark-neumorphic',
+    'brutalist',
+  ];
 
   function normalize(theme) {
     return THEMES.includes(theme) ? theme : 'basic';
