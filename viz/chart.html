@@ -1,10 +1,9 @@
 ﻿<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark-neumorphic">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reddit Posting History — GregBahm</title>
-<script src="theme.js"></script>
 <style>
   :root {
     color-scheme: light;
@@ -1475,10 +1474,6 @@
     draw();
   }
   window.addEventListener('resize', resize);
-  window.addEventListener('reddit-data-theme-change', () => {
-    readColors();
-    requestAnimationFrame(draw);
-  });
   if ('ResizeObserver' in window) new ResizeObserver(resize).observe(wrap);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); draw(); });
   if (isEmbedded) {

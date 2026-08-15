@@ -1,10 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark-neumorphic">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Commentary Timeline</title>
-<script src="theme.js"></script>
 <style>
   :root {
     color-scheme: light;
@@ -184,7 +183,6 @@
     canvas.height = Math.round(height * dpr);
     requestAnimationFrame(draw);
   }).observe(canvas);
-  window.addEventListener('reddit-data-theme-change', () => requestAnimationFrame(draw));
 })();
 </script>
 </body>
