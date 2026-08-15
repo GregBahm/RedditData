@@ -1,0 +1,365 @@
+:root[data-theme] {
+  --theme-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --theme-display-font: var(--theme-font);
+  --theme-radius: 6px;
+  --theme-panel-radius: 8px;
+  --theme-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+  --theme-control-shadow: none;
+}
+
+:root[data-theme="basic"] {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-1: #fcfcfb;
+  --text: #0b0b0b;
+  --text-primary: #0b0b0b;
+  --secondary: #52514e;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --text-muted: #898781;
+  --border: rgba(11, 11, 11, 0.1);
+  --accent: #2a78d6;
+  --control-accent: #5f5e5a;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --dot: #898781;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #090b0d;
+  --surface: #11151a;
+  --surface-1: #11151a;
+  --text: #f5f7fa;
+  --text-primary: #f5f7fa;
+  --secondary: #b7c0ca;
+  --text-secondary: #b7c0ca;
+  --muted: #78838f;
+  --text-muted: #78838f;
+  --border: rgba(255, 255, 255, 0.12);
+  --accent: #8ab4f8;
+  --control-accent: #aeb8c3;
+  --gridline: #222a32;
+  --baseline: #3b4651;
+  --dot: #8995a1;
+  --theme-shadow: 0 18px 48px rgba(0, 0, 0, 0.52);
+}
+
+:root[data-theme="minimalistic"] {
+  color-scheme: light;
+  --page: #ffffff;
+  --surface: #ffffff;
+  --surface-1: #ffffff;
+  --text: #171717;
+  --text-primary: #171717;
+  --secondary: #565656;
+  --text-secondary: #565656;
+  --muted: #929292;
+  --text-muted: #929292;
+  --border: #dedede;
+  --accent: #171717;
+  --control-accent: #555555;
+  --gridline: #eeeeee;
+  --baseline: #cfcfcf;
+  --dot: #929292;
+  --theme-font: "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  --theme-display-font: Georgia, "Times New Roman", serif;
+  --theme-radius: 0;
+  --theme-panel-radius: 0;
+  --theme-shadow: 0 16px 44px rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="bauhaus"] {
+  color-scheme: light;
+  --page: #eee8d5;
+  --surface: #fffaf0;
+  --surface-1: #fffaf0;
+  --text: #111111;
+  --text-primary: #111111;
+  --secondary: #3d3a35;
+  --text-secondary: #3d3a35;
+  --muted: #716b61;
+  --text-muted: #716b61;
+  --border: #111111;
+  --accent: #d62d20;
+  --control-accent: #111111;
+  --gridline: #d8d0bd;
+  --baseline: #111111;
+  --dot: #716b61;
+  --theme-font: "Trebuchet MS", "Segoe UI", sans-serif;
+  --theme-display-font: "Arial Black", "Trebuchet MS", sans-serif;
+  --theme-radius: 0;
+  --theme-panel-radius: 0;
+  --theme-shadow: 8px 8px 0 #111111;
+  --theme-control-shadow: 2px 2px 0 #111111;
+}
+
+:root[data-theme="neumorphic"] {
+  color-scheme: light;
+  --page: #e7ebf0;
+  --surface: #e7ebf0;
+  --surface-1: #e7ebf0;
+  --text: #303844;
+  --text-primary: #303844;
+  --secondary: #596473;
+  --text-secondary: #596473;
+  --muted: #7e8997;
+  --text-muted: #7e8997;
+  --border: transparent;
+  --accent: #4d647c;
+  --control-accent: #657485;
+  --gridline: #d4dae1;
+  --baseline: #b8c1cb;
+  --dot: #84909d;
+  --theme-radius: 14px;
+  --theme-panel-radius: 20px;
+  --theme-shadow: 14px 14px 30px #c4c8cc, -14px -14px 30px #ffffff;
+  --theme-control-shadow: 4px 4px 9px #c4c8cc, -4px -4px 9px #ffffff;
+}
+
+:root[data-theme="brutalist"] {
+  color-scheme: light;
+  --page: #f4f000;
+  --surface: #fffef5;
+  --surface-1: #fffef5;
+  --text: #050505;
+  --text-primary: #050505;
+  --secondary: #242424;
+  --text-secondary: #242424;
+  --muted: #565656;
+  --text-muted: #565656;
+  --border: #050505;
+  --accent: #ff3d00;
+  --control-accent: #050505;
+  --gridline: #d7d6cb;
+  --baseline: #050505;
+  --dot: #636363;
+  --theme-font: "Courier New", ui-monospace, monospace;
+  --theme-display-font: Impact, "Arial Black", sans-serif;
+  --theme-radius: 0;
+  --theme-panel-radius: 0;
+  --theme-shadow: 7px 7px 0 #050505;
+  --theme-control-shadow: 3px 3px 0 #050505;
+}
+
+html[data-theme] body {
+  font-family: var(--theme-font);
+}
+
+html[data-theme] .page-header h1,
+html[data-theme] .section-heading,
+html[data-theme] header h1 {
+  font-family: var(--theme-display-font);
+}
+
+html[data-theme] .control,
+html[data-theme] button.toggle,
+html[data-theme] .tab,
+html[data-theme] #postDetail,
+html[data-theme] #detail,
+html[data-theme] #tip,
+html[data-theme] .import-dialog {
+  border-radius: var(--theme-radius);
+}
+
+html[data-theme] #postDetail,
+html[data-theme] .import-dialog {
+  border-radius: var(--theme-panel-radius);
+  box-shadow: var(--theme-shadow);
+}
+
+html[data-theme] .control,
+html[data-theme] button.toggle {
+  box-shadow: var(--theme-control-shadow);
+}
+
+html[data-theme="dark"] .page-header {
+  background: rgba(9, 11, 13, 0.94);
+  border-bottom-color: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(18px);
+}
+
+html[data-theme="dark"] .section {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .control,
+html[data-theme="dark"] button.toggle,
+html[data-theme="dark"] .tab.active {
+  background: #171c22;
+}
+
+html[data-theme="dark"] #postDetail[data-kind="commentary"],
+html[data-theme="dark"] #postDetail[data-kind="subreddit-commentary"] {
+  background: rgba(17, 21, 26, 0.92);
+}
+
+html[data-theme="minimalistic"] .page-header {
+  padding-top: 22px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid #171717;
+}
+
+html[data-theme="minimalistic"] .page-header h1 {
+  font-size: 21px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+html[data-theme="minimalistic"] .section {
+  border-bottom: 1px solid #eeeeee;
+}
+
+html[data-theme="minimalistic"] .section-header {
+  padding-block: 8px;
+}
+
+html[data-theme="minimalistic"] .section-heading {
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+html[data-theme="minimalistic"] .control,
+html[data-theme="minimalistic"] button.toggle {
+  padding-inline: 4px;
+  background: transparent;
+  border-width: 0 0 1px;
+}
+
+html[data-theme="minimalistic"] #postDetail {
+  border-width: 1px 0;
+}
+
+html[data-theme="bauhaus"] .page-header {
+  position: relative;
+  border-bottom: 4px solid #111111;
+}
+
+html[data-theme="bauhaus"] .page-header::after {
+  content: "";
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  background: #f5c400;
+  border: 2px solid #111111;
+  border-radius: 50%;
+}
+
+html[data-theme="bauhaus"] .page-header h1,
+html[data-theme="bauhaus"] .section-heading {
+  text-transform: uppercase;
+  letter-spacing: 0.055em;
+}
+
+html[data-theme="bauhaus"] .section {
+  border-bottom: 3px solid #111111;
+}
+
+html[data-theme="bauhaus"] .section-heading::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  background: #d62d20;
+}
+
+html[data-theme="bauhaus"] .section:nth-of-type(3n) .section-heading::before {
+  background: #165baa;
+  border-radius: 50%;
+}
+
+html[data-theme="bauhaus"] .section:nth-of-type(3n + 1) .section-heading::before {
+  background: #f5c400;
+  transform: rotate(45deg);
+}
+
+html[data-theme="bauhaus"] .control,
+html[data-theme="bauhaus"] button.toggle {
+  border: 2px solid #111111;
+  font-weight: 700;
+}
+
+html[data-theme="bauhaus"] .control:active,
+html[data-theme="bauhaus"] button.toggle:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+html[data-theme="neumorphic"] .page-header {
+  margin: 12px;
+  border: 0;
+  border-radius: 18px;
+  box-shadow: var(--theme-control-shadow);
+}
+
+html[data-theme="neumorphic"] .section {
+  margin: 10px 12px;
+  overflow: hidden;
+  border-radius: 20px;
+  box-shadow: 7px 7px 16px #c9cdd2, -7px -7px 16px #ffffff;
+}
+
+html[data-theme="neumorphic"] .control,
+html[data-theme="neumorphic"] button.toggle {
+  border: 0;
+}
+
+html[data-theme="neumorphic"] .control:active,
+html[data-theme="neumorphic"] button.toggle:active {
+  box-shadow: inset 3px 3px 7px #c4c8cc, inset -3px -3px 7px #ffffff;
+}
+
+html[data-theme="neumorphic"] #postDetail {
+  border: 0;
+}
+
+html[data-theme="brutalist"] .page-header {
+  border-bottom: 5px solid #050505;
+}
+
+html[data-theme="brutalist"] .page-header h1 {
+  font-size: 22px;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+html[data-theme="brutalist"] .section {
+  border-bottom: 4px solid #050505;
+}
+
+html[data-theme="brutalist"] .section-header {
+  background: #fffef5;
+  border-bottom: 2px solid #050505;
+}
+
+html[data-theme="brutalist"] .section-heading {
+  text-transform: uppercase;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+html[data-theme="brutalist"] .control,
+html[data-theme="brutalist"] button.toggle,
+html[data-theme="brutalist"] .tab {
+  border: 2px solid #050505;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+html[data-theme="brutalist"] .control:hover,
+html[data-theme="brutalist"] button.toggle:hover {
+  background: #ff3d00;
+  color: #ffffff;
+}
+
+html[data-theme="brutalist"] #postDetail,
+html[data-theme="brutalist"] .import-dialog {
+  border: 3px solid #050505;
+}
+
+html[data-theme="brutalist"] .section-resizer::after {
+  height: 6px;
+  background: #050505;
+  border-radius: 0;
+}

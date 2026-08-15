@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reddit Posting History — GregBahm</title>
+<script src="theme.js"></script>
 <style>
   :root {
     color-scheme: light;
@@ -236,6 +237,7 @@
     z-index: 10;
   }
 </style>
+<link rel="stylesheet" href="themes.css">
 </head>
 <body>
 <header>
@@ -525,7 +527,7 @@
   function readColors() {
     C = {
       surface: css('--surface-1'), grid: css('--gridline'), baseline: css('--baseline'),
-      muted: css('--text-muted'), dot: css('--dot'), accent: css('--accent'),
+      text: css('--text-primary'), muted: css('--text-muted'), dot: css('--dot'), accent: css('--accent'),
       ovFreq: css('--ov-freq'), ovText: css('--ov-text'), ovNet: css('--ov-net'),
       ovPct: css('--ov-pct'), ovAvg: css('--ov-avg'),
     };
@@ -818,8 +820,8 @@
       ctx.textBaseline = 'middle';
       for (const L of labelSpots) {
         ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-        ctx.fillStyle = '#1c1c1a';
+        ctx.strokeStyle = C.surface;
+        ctx.fillStyle = C.text;
         ctx.strokeText(L.name, L.x, L.y);
         ctx.fillText(L.name, L.x, L.y);
       }
@@ -1473,6 +1475,10 @@
     draw();
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('reddit-data-theme-change', () => {
+    readColors();
+    requestAnimationFrame(draw);
+  });
   if ('ResizeObserver' in window) new ResizeObserver(resize).observe(wrap);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); draw(); });
   if (isEmbedded) {

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>u/GregBahm's Reddit Addiction Visualized</title>
+<script src="theme.js"></script>
 <style>
   :root {
     color-scheme: light;
@@ -54,6 +55,17 @@
     text-decoration: none;
   }
   .page-header a:hover { text-decoration: underline; }
+  .theme-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--secondary);
+    font-size: 12px;
+  }
+  .theme-picker select {
+    min-width: 126px;
+    padding-right: 28px;
+  }
   .section-header {
     display: flex;
     align-items: center;
@@ -322,10 +334,22 @@
   }
 </style>
 <link rel="stylesheet" href="import/import.css">
+<link rel="stylesheet" href="themes.css">
 </head>
 <body>
 <header class="page-header">
   <h1 id="pageTitle"><a href="https://www.reddit.com/u/GregBahm">u/GregBahm</a>'s Reddit Addiction Visualized</h1>
+  <label class="theme-picker">
+    <span>Theme</span>
+    <select class="control" id="themeSelect" aria-label="Visualization theme">
+      <option value="basic">Basic</option>
+      <option value="dark">Dark mode</option>
+      <option value="minimalistic">Minimalistic</option>
+      <option value="bauhaus">Bauhaus</option>
+      <option value="neumorphic">Neumorphic</option>
+      <option value="brutalist">Brutalist</option>
+    </select>
+  </label>
   <div class="import-actions">
     <span class="dataset-status" id="datasetStatus"></span>
     <a class="control" href="TopicBreakdown.html">Topic Breakdown</a>
@@ -476,6 +500,7 @@
   );
   const postDetail = document.getElementById('postDetail');
   const commentaryFocusBand = document.getElementById('commentaryFocusBand');
+  const themeSelect = document.getElementById('themeSelect');
   let commentaryFocus = null;
   let shownSubredditInsight = null;
   let postDetailToken = 0;
@@ -563,6 +588,19 @@
     return `~${Math.max(1, Math.round(sigma * 4))} wk`;
   }
 
+  function shareTheme(frame, theme = RedditTheme.current()) {
+    frame.contentWindow.postMessage({
+      type: 'reddit-data-theme',
+      theme,
+    }, location.origin === 'null' ? '*' : location.origin);
+  }
+
+  themeSelect.value = RedditTheme.current();
+  themeSelect.addEventListener('change', () => {
+    const theme = RedditTheme.apply(themeSelect.value);
+    for (const frame of frames) shareTheme(frame, theme);
+  });
+
   function shareSmoothing(frame) {
     frame.contentWindow.postMessage({
       type: 'reddit-data-smoothing',
@@ -574,7 +612,10 @@
     value.textContent = smoothingLabel(Number(slider.value));
     for (const frame of frames) shareSmoothing(frame);
   });
-  for (const frame of frames) frame.addEventListener('load', () => shareSmoothing(frame));
+  for (const frame of frames) frame.addEventListener('load', () => {
+    shareSmoothing(frame);
+    shareTheme(frame);
+  });
 
   function sendControl(frameTitle, action, controlValue) {
     const frame = frames.find(candidate => candidate.title === frameTitle);
