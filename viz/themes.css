@@ -1,0 +1,133 @@
+:root[data-theme="dark-neumorphic"] {
+  color-scheme: dark;
+  --page: #15191f;
+  --surface: #1b2027;
+  --surface-1: #1b2027;
+  --text: #e9eef5;
+  --text-primary: #e9eef5;
+  --secondary: #b2bdc9;
+  --text-secondary: #b2bdc9;
+  --muted: #7f8b98;
+  --text-muted: #7f8b98;
+  --border: transparent;
+  --accent: #91a6bc;
+  --control-accent: #aab7c5;
+  --gridline: #252c35;
+  --baseline: #414b57;
+  --dot: #84909d;
+  --theme-shadow: 14px 14px 30px #0c0f13, -14px -14px 30px #2a323d;
+  --theme-control-shadow: 4px 4px 9px #0d1014, -4px -4px 9px #29313b;
+  --theme-section-shadow: 7px 7px 16px #0d1014, -7px -7px 16px #29313b;
+  --theme-inset-shadow: inset 3px 3px 7px #0d1014, inset -3px -3px 7px #29313b;
+}
+
+html[data-theme="dark-neumorphic"] body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html[data-theme="dark-neumorphic"] .control,
+html[data-theme="dark-neumorphic"] button.toggle,
+html[data-theme="dark-neumorphic"] .tab,
+html[data-theme="dark-neumorphic"] #postDetail,
+html[data-theme="dark-neumorphic"] #detail,
+html[data-theme="dark-neumorphic"] #tip,
+html[data-theme="dark-neumorphic"] .import-dialog {
+  border-radius: 14px;
+}
+
+html[data-theme="dark-neumorphic"] #postDetail,
+html[data-theme="dark-neumorphic"] .import-dialog {
+  border-radius: 20px;
+  box-shadow: var(--theme-shadow);
+}
+
+html[data-theme="dark-neumorphic"] .page-header {
+  margin: 0 0 12px;
+  background: var(--surface);
+  border: 0;
+  border-radius: 0 0 18px 18px;
+  box-shadow: var(--theme-control-shadow);
+}
+
+html[data-theme="dark-neumorphic"] .section {
+  margin: 10px 12px;
+  overflow: hidden;
+  background: var(--surface);
+  border-radius: 20px;
+  box-shadow: var(--theme-section-shadow);
+}
+
+html[data-theme="dark-neumorphic"] .control,
+html[data-theme="dark-neumorphic"] button.toggle {
+  border: 0;
+  box-shadow: var(--theme-control-shadow);
+}
+
+html[data-theme="dark-neumorphic"] .control:active,
+html[data-theme="dark-neumorphic"] button.toggle:active {
+  box-shadow: var(--theme-inset-shadow);
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link {
+  position: relative;
+  overflow: hidden;
+  padding: 3px 11px;
+  background: #142231;
+  border-radius: 999px;
+  color: #8da9c2;
+  box-shadow: 0 5px 11px rgba(7, 10, 14, 0.52);
+  transform: translateY(-1px);
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  bottom: -50%;
+  left: -55%;
+  width: 34%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(196, 222, 243, 0.55),
+    transparent
+  );
+  transform: skewX(-22deg);
+  pointer-events: none;
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link:hover {
+  background: #182a3b;
+  color: #9bb8d1;
+  text-decoration: none;
+  box-shadow: 0 7px 14px rgba(7, 10, 14, 0.58);
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link:hover::after {
+  animation: view-link-glint 650ms ease-out;
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link:active {
+  box-shadow: 0 3px 7px rgba(7, 10, 14, 0.48);
+  transform: translateY(0);
+}
+
+@keyframes view-link-glint {
+  from { left: -55%; }
+  to { left: 125%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="dark-neumorphic"] .section-view-link:hover::after {
+    animation: none;
+  }
+}
+
+html[data-theme="dark-neumorphic"] #postDetail {
+  border: 0;
+}
+
+html[data-theme="dark-neumorphic"] #postDetail[data-kind="commentary"],
+html[data-theme="dark-neumorphic"] #postDetail[data-kind="subreddit-commentary"] {
+  background: rgba(27, 32, 39, 0.94);
+}

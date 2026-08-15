@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark-neumorphic">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -322,6 +322,7 @@
   }
 </style>
 <link rel="stylesheet" href="import/import.css">
+<link rel="stylesheet" href="themes.css">
 </head>
 <body>
 <header class="page-header">
@@ -574,7 +575,9 @@
     value.textContent = smoothingLabel(Number(slider.value));
     for (const frame of frames) shareSmoothing(frame);
   });
-  for (const frame of frames) frame.addEventListener('load', () => shareSmoothing(frame));
+  for (const frame of frames) frame.addEventListener('load', () => {
+    shareSmoothing(frame);
+  });
 
   function sendControl(frameTitle, action, controlValue) {
     const frame = frames.find(candidate => candidate.title === frameTitle);
@@ -760,15 +763,20 @@
   });
 
   function setDefaultHalfHeights() {
-    const pageHeaderHeight = document.querySelector('.page-header').offsetHeight;
-    const commentaryHeight = document.getElementById('commentary').offsetHeight;
     const timelineSections = ['posts', 'subreddits'].map(id => document.getElementById(id));
-    const sectionHeaderHeight = timelineSections.reduce((sum, body) =>
-      sum + body.closest('.section').querySelector('.section-header').offsetHeight, 0);
-    const availableHeight = window.innerHeight - pageHeaderHeight - commentaryHeight - sectionHeaderHeight;
-    const defaultHeight = Math.max(300, Math.min(600, availableHeight / 2));
-    for (const body of timelineSections) {
-      if (body.dataset.userResized === 'true') continue;
+    const adjustable = timelineSections.filter(body => body.dataset.userResized !== 'true');
+    if (!adjustable.length) return;
+    const currentBodyHeight = timelineSections.reduce((sum, body) =>
+      sum + body.getBoundingClientRect().height, 0);
+    const stackBottom = document.getElementById('subreddits')
+      .closest('.section').getBoundingClientRect().bottom + window.scrollY;
+    const fixedHeight = stackBottom - currentBodyHeight;
+    const resizedHeight = timelineSections
+      .filter(body => body.dataset.userResized === 'true')
+      .reduce((sum, body) => sum + body.getBoundingClientRect().height, 0);
+    const availableHeight = window.innerHeight - fixedHeight - resizedHeight;
+    const defaultHeight = Math.max(300, Math.min(600, availableHeight / adjustable.length));
+    for (const body of adjustable) {
       body.style.height = defaultHeight + 'px';
     }
   }
