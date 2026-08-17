@@ -57,6 +57,22 @@ html[data-theme="dark-neumorphic"] .section {
   box-shadow: var(--theme-section-shadow);
 }
 
+html[data-theme="dark-neumorphic"] #commentarySection {
+  z-index: 1;
+  margin: 0;
+  padding: 0 12px 10px;
+  background: var(--page);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-theme="dark-neumorphic"] #commentary,
+html[data-theme="dark-neumorphic"] #commentary iframe {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 html[data-theme="dark-neumorphic"] .control,
 html[data-theme="dark-neumorphic"] button.toggle {
   border: 0;

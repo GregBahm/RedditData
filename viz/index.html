@@ -262,10 +262,14 @@
   #postDetail .insight-image {
     float: left;
     width: 108px;
-    max-height: 108px;
+    height: 108px;
     margin: 0 14px 8px 0;
-    border-radius: 6px;
+    border: 2px solid var(--commentary-color, transparent);
+    border-radius: 50%;
     object-fit: cover;
+  }
+  #postDetail[data-kind="commentary"] .score {
+    color: var(--commentary-color, var(--text));
   }
   #postDetail .body { color: var(--secondary); overflow-wrap: break-word; }
   #postDetail .body p { margin: 0 0 6px; }
@@ -359,11 +363,6 @@
       <iframe title="Posts" src="chart.html?embed=1&amp;view=time" loading="eager"></iframe>
     </div>
   </section>
-  <section class="section" id="commentarySection">
-    <div class="section-body" id="commentary" style="--section-height: 10px">
-      <iframe title="Commentary" src="Commentary.html" loading="eager"></iframe>
-    </div>
-  </section>
   <section class="section persistent-controls">
     <div class="section-header">
       <h2 class="section-heading" title="Subreddit activity over time">Subreddit Distribution</h2>
@@ -383,6 +382,11 @@
     </div>
     <div class="section-resizer" data-resizer-for="subreddits" role="separator" tabindex="0"
         aria-label="Resize Subreddit Distribution section" title="Drag to resize"></div>
+  </section>
+  <section class="section" id="commentarySection">
+    <div class="section-body" id="commentary" style="--section-height: 30px">
+      <iframe title="Commentary" src="Commentary.html" loading="eager"></iframe>
+    </div>
   </section>
   <section class="section">
     <div class="section-header">
@@ -484,11 +488,20 @@
   function positionCommentaryDetail() {
     if (postDetail.hidden || postDetail.dataset.kind !== 'commentary') return;
     const postsRect = postsFrame.getBoundingClientRect();
-    const commentaryRect = commentaryFrame.getBoundingClientRect();
-    postDetail.style.top = 'auto';
-    postDetail.style.bottom = Math.max(0, window.innerHeight - commentaryRect.top + 4) + 'px';
+    const subredditRect = subredditFrame.getBoundingClientRect();
+    const dividerY = (postsRect.bottom + subredditRect.top) / 2;
+    postDetail.style.bottom = 'auto';
     postDetail.style.height = 'auto';
-    postDetail.style.maxHeight = Math.max(120, commentaryRect.top - postsRect.top - 8) + 'px';
+    postDetail.style.maxHeight = Math.max(
+      120,
+      Math.min(window.innerHeight - 16, subredditRect.bottom - postsRect.top)
+    ) + 'px';
+    const panelHeight = postDetail.getBoundingClientRect().height;
+    const top = Math.max(
+      8,
+      Math.min(window.innerHeight - panelHeight - 8, dividerY - panelHeight / 2)
+    );
+    postDetail.style.top = top + 'px';
   }
 
   function showSubredditInsight(message) {
@@ -653,6 +666,14 @@
       }
       return;
     }
+    if (e.data?.type === 'reddit-data-clear-selection' &&
+        frames.some(frame => frame.contentWindow === e.source)) {
+      commentaryFrame.contentWindow.postMessage(
+        e.data,
+        location.origin === 'null' ? '*' : location.origin
+      );
+      return;
+    }
     if (e.data?.type === 'reddit-data-subreddit-focus' &&
         e.source === subredditFrame.contentWindow) {
       postsFrame.contentWindow.postMessage(e.data, location.origin === 'null' ? '*' : location.origin);
@@ -691,6 +712,7 @@
     const token = ++postDetailToken;
     shownSubredditInsight = null;
     postDetail.replaceChildren();
+    postDetail.style.removeProperty('--commentary-color');
     postDetail.hidden = !d;
     if (!d) return;
     postDetail.dataset.kind = d.kind === 'insight' ? 'commentary' : 'post';
@@ -708,16 +730,18 @@
     postDetail.dataset.position = cursorY !== null && cursorY >= bottomPanelTop - 12 ? 'top' : 'bottom';
 
     if (d.kind === 'insight') {
-      positionCommentaryDetail();
+      postDetail.style.setProperty('--commentary-color', d.color);
       const image = document.createElement('img');
       image.className = 'insight-image';
       image.src = d.image;
-      image.alt = `${d.year} timeline insight`;
+      image.alt = `${d.label} timeline insight`;
+      image.addEventListener('load', positionCommentaryDetail, { once: true });
       postDetail.append(image);
       const meta = document.createElement('div');
       meta.className = 'meta';
-      addText(meta, 'span', 'score', String(d.year));
+      addText(meta, 'span', 'score', d.label);
       postDetail.append(meta, RedditPostContent.renderMarkdown(d.body));
+      positionCommentaryDetail();
       return;
     }
 
@@ -768,8 +792,11 @@
     if (!adjustable.length) return;
     const currentBodyHeight = timelineSections.reduce((sum, body) =>
       sum + body.getBoundingClientRect().height, 0);
-    const stackBottom = document.getElementById('subreddits')
-      .closest('.section').getBoundingClientRect().bottom + window.scrollY;
+    const commentarySection = document.getElementById('commentarySection');
+    const stackEnd = commentarySection.hidden
+      ? document.getElementById('subreddits').closest('.section')
+      : commentarySection;
+    const stackBottom = stackEnd.getBoundingClientRect().bottom + window.scrollY;
     const fixedHeight = stackBottom - currentBodyHeight;
     const resizedHeight = timelineSections
       .filter(body => body.dataset.userResized === 'true')
@@ -804,7 +831,9 @@
   }
   const commentaryDetailResizeObserver = new ResizeObserver(positionCommentaryDetail);
   commentaryDetailResizeObserver.observe(postsFrame);
+  commentaryDetailResizeObserver.observe(subredditFrame);
   commentaryDetailResizeObserver.observe(commentaryFrame);
+  commentaryDetailResizeObserver.observe(postDetail);
 
   for (const handle of document.querySelectorAll('.section-resizer')) {
     const body = document.getElementById(handle.dataset.resizerFor);

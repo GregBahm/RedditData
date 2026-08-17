@@ -25,7 +25,7 @@
   }
   * { box-sizing: border-box; }
   html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-  body { background: var(--surface); font-family: system-ui, sans-serif; }
+  body { background: transparent; font-family: system-ui, sans-serif; }
   canvas { display: block; width: 100%; height: 100%; cursor: default; touch-action: none; }
 </style>
 <link rel="stylesheet" href="themes.css">
@@ -54,7 +54,7 @@
   let dpr = 1;
   let hovered = -1;
   let pinned = -1;
-  const sectionColors = ['#e76f51', '#f4a261', '#2a9d8f', '#6c63ff', '#d45087'];
+  const sectionColors = ['#e76f51', '#f4a261', '#e9c46a', '#2a9d8f', '#6c63ff', '#d45087'];
   const barHeight = 10;
   const margin = { left: 56, right: 8, top: 10, bottom: 10 };
 
@@ -63,9 +63,10 @@
     (time - viewMin) / (viewMax - viewMin) * (width - margin.left - margin.right);
   const timeFor = x => viewMin +
     (x - margin.left) / (width - margin.left - margin.right) * (viewMax - viewMin);
+  const barTop = () => height - barHeight;
 
   function sectionAt(x, y) {
-    const top = (height - barHeight) / 2;
+    const top = barTop();
     const bottom = top + barHeight;
     if (x < margin.left || x > width - margin.right ||
         y < top || y > bottom) return -1;
@@ -77,18 +78,45 @@
   function draw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    const top = (height - barHeight) / 2;
+    const top = barTop();
     const bottom = top + barHeight;
+    ctx.globalAlpha = 0.58;
+    ctx.fillStyle = color('--secondary');
+    ctx.font = '500 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Commentary', width / 2, Math.max(7, top / 2));
+    ctx.globalAlpha = 1;
     for (let i = 0; i < insights.length; i++) {
       const insight = insights[i];
       const x0 = Math.max(margin.left, xFor(insight.start));
       const x1 = Math.min(width - margin.right, xFor(Math.min(insight.end, t1)));
       if (x1 <= x0) continue;
       ctx.globalAlpha = i === hovered || i === pinned ? 1 : 0.72;
+      const pillWidth = x1 - x0;
       ctx.fillStyle = sectionColors[i];
       ctx.beginPath();
-      ctx.roundRect(x0, top, x1 - x0, bottom - top, 5);
+      ctx.roundRect(x0, top, pillWidth, bottom - top, 5);
       ctx.fill();
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x0, top, pillWidth, bottom - top, 5);
+      ctx.clip();
+      const bevel = ctx.createLinearGradient(0, top, 0, bottom);
+      bevel.addColorStop(0, 'rgba(255, 255, 255, 0.34)');
+      bevel.addColorStop(0.42, 'rgba(255, 255, 255, 0.08)');
+      bevel.addColorStop(0.58, 'rgba(0, 0, 0, 0.04)');
+      bevel.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
+      ctx.fillStyle = bevel;
+      ctx.fillRect(x0, top, pillWidth, bottom - top);
+      ctx.restore();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.13)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x0 + 0.5, top + 0.5, Math.max(0, pillWidth - 1), bottom - top - 1, 4.5);
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
   }
@@ -115,9 +143,10 @@
       pointerY,
       detail: insight ? {
         kind: 'insight',
-        year: insight.year,
+        label: insight.label,
         body: insight.body,
         image: insight.image,
+        color: sectionColors[index],
       } : null,
     }, location.origin === 'null' ? '*' : location.origin);
   }
@@ -163,8 +192,16 @@
   }, { passive: false });
 
   window.addEventListener('message', event => {
-    if (event.source !== parent || event.origin !== location.origin ||
-        event.data?.type !== 'reddit-data-timeline-view') return;
+    if (event.source !== parent || event.origin !== location.origin) return;
+    if (event.data?.type === 'reddit-data-clear-selection') {
+      hovered = -1;
+      pinned = -1;
+      publishDetail(-1, false, null);
+      publishFocus(-1);
+      requestAnimationFrame(draw);
+      return;
+    }
+    if (event.data?.type !== 'reddit-data-timeline-view') return;
     const min = Number(event.data.min);
     const max = Number(event.data.max);
     if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;

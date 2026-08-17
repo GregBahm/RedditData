@@ -1092,6 +1092,13 @@
   }
 
   let timelinePublishPending = false;
+  function publishClearSelection() {
+    if (!isEmbedded) return;
+    parent.postMessage({
+      type: 'reddit-data-clear-selection',
+    }, location.origin === 'null' ? '*' : location.origin);
+  }
+
   function publishTimelineView() {
     if (!document.body.classList.contains('embed') ||
         !['time', 'ltime', 'trends', 'sdist'].includes(mode) ||
@@ -1153,6 +1160,7 @@
       const r = canvas.getBoundingClientRect();
       const hit = sdistBandAt(e.clientX - r.left, e.clientY - r.top);
       sdistSelBand = hit ? hit.band : -1;   // empty space deselects
+      if (!hit) publishClearSelection();
       requestAnimationFrame(draw);
       return;
     }
@@ -1161,7 +1169,12 @@
       const d = nearest(e.clientX - r.left, e.clientY - r.top);
       pinned = d;
       showDetail(d, !!d);
+      if (!d) publishClearSelection();
       requestAnimationFrame(draw);
+      return;
+    }
+    if (moved < 5 && mode === 'trends') {
+      publishClearSelection();
     }
   });
   canvas.addEventListener('pointerleave', () => {
