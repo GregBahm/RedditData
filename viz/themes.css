@@ -35,10 +35,25 @@ html[data-theme="dark-neumorphic"] .import-dialog {
   border-radius: 14px;
 }
 
-html[data-theme="dark-neumorphic"] #postDetail,
 html[data-theme="dark-neumorphic"] .import-dialog {
   border-radius: 20px;
   box-shadow: var(--theme-shadow);
+}
+
+/* pop-up panels float above the page instead of embossing into it: a flat
+   face with a pill-style bevel confined to the edge pixels (light catching
+   the top rim, shade tucked under the bottom) and a soft drop shadow cast
+   straight down */
+html[data-theme="dark-neumorphic"] #postDetail {
+  border-radius: 20px;
+  border: 0;
+  box-shadow:
+    inset 0 2px 2px -1px rgba(255, 255, 255, 0.24),
+    inset 2px 0 2px -1px rgba(255, 255, 255, 0.08),
+    inset -2px 0 2px -1px rgba(0, 0, 0, 0.18),
+    inset 0 -2px 2px -1px rgba(0, 0, 0, 0.34),
+    0 22px 44px rgba(7, 10, 14, 0.55),
+    0 8px 18px rgba(7, 10, 14, 0.42);
 }
 
 html[data-theme="dark-neumorphic"] .page-header {
@@ -159,10 +174,6 @@ html[data-theme="dark-neumorphic"] #importOpen:active {
   html[data-theme="dark-neumorphic"] #importOpen:hover::after {
     animation: none;
   }
-}
-
-html[data-theme="dark-neumorphic"] #postDetail {
-  border: 0;
 }
 
 html[data-theme="dark-neumorphic"] #postDetail[data-kind="commentary"],

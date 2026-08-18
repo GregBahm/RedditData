@@ -162,6 +162,17 @@
     overflow: hidden;
     background: var(--surface);
   }
+  .section.reveal-init {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+  .section.reveal-init.reveal-in {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0s),
+      transform 0.7s cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0s);
+  }
   .section-heading {
     display: flex;
     align-items: center;
@@ -207,6 +218,8 @@
     display: none;
     pointer-events: none;
     opacity: 0.1;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 34%);
+    mask-image: linear-gradient(to bottom, transparent, #000 34%);
   }
   #postDetail {
     position: fixed;
@@ -492,6 +505,7 @@
   const commentaryFocusBand = document.getElementById('commentaryFocusBand');
   let commentaryFocus = null;
   let shownSubredditInsight = null;
+  let shownInsightLabel = null;
   let postDetailToken = 0;
 
   function positionCommentaryDetail() {
@@ -505,12 +519,27 @@
       120,
       Math.min(window.innerHeight - 16, subredditRect.bottom - postsRect.top)
     ) + 'px';
-    const panelHeight = postDetail.getBoundingClientRect().height;
+    const panelHeight = postDetail.offsetHeight;   // layout height: immune to the entrance scale transform
     const top = Math.max(
       8,
       Math.min(window.innerHeight - panelHeight - 8, dividerY - panelHeight / 2)
     );
     postDetail.style.top = top + 'px';
+  }
+
+  // the commentary panel flows up and out of the hovered timeline pill:
+  // it scales in around the pill's viewport position instead of popping
+  // into place mid-screen
+  function animateCommentaryDetailFrom(anchorX, anchorY) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    for (const animation of postDetail.getAnimations()) animation.cancel();
+    const rect = postDetail.getBoundingClientRect();
+    postDetail.style.transformOrigin =
+      (anchorX - rect.left) + 'px ' + (anchorY - rect.top) + 'px';
+    postDetail.animate([
+      { transform: 'scale(0.25)', opacity: 0 },
+      { transform: 'none', opacity: 1 },
+    ], { duration: 560, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
   }
 
   function showSubredditInsight(message) {
@@ -519,16 +548,18 @@
       shownSubredditInsight = null;
       return;
     }
-    if (shownSubredditInsight !== message.detail.subreddit ||
+    const insightKey = message.detail.subreddit + '|' + (message.detail.share || '');
+    if (shownSubredditInsight !== insightKey ||
         postDetail.dataset.kind !== 'subreddit-commentary') {
       ++postDetailToken;
       postDetail.replaceChildren();
       postDetail.hidden = false;
       postDetail.dataset.kind = 'subreddit-commentary';
-      shownSubredditInsight = message.detail.subreddit;
+      shownSubredditInsight = insightKey;
       const meta = document.createElement('div');
       meta.className = 'meta';
       addText(meta, 'span', 'score', message.detail.subreddit);
+      if (message.detail.share) addText(meta, 'span', 'secondary', message.detail.share);
       postDetail.append(meta, RedditPostContent.renderMarkdown(message.detail.body));
     }
     delete postDetail.dataset.position;
@@ -560,7 +591,6 @@
     }
     const postsRect = postsFrame.getBoundingClientRect();
     const commentaryRect = commentaryFrame.getBoundingClientRect();
-    const subredditRect = subredditFrame.getBoundingClientRect();
     const plotLeft = commentaryRect.left + 56;
     const plotWidth = commentaryRect.width - 56 - 8;
     const span = commentaryFocus.viewMax - commentaryFocus.viewMin;
@@ -576,7 +606,9 @@
     commentaryFocusBand.style.left = left + 'px';
     commentaryFocusBand.style.top = postsRect.top + 'px';
     commentaryFocusBand.style.width = (right - left) + 'px';
-    commentaryFocusBand.style.height = (subredditRect.bottom - postsRect.top) + 'px';
+    // run down to the top edge of the timeline pill (the pills occupy the
+    // bottom 10px of the commentary frame), so stripe and pill connect
+    commentaryFocusBand.style.height = (commentaryRect.bottom - 10 - postsRect.top) + 'px';
     commentaryFocusBand.style.background = commentaryFocus.color;
   }
 
@@ -718,8 +750,11 @@
     if (!sourceFrame || e.data?.type !== 'reddit-data-post-detail') return;
     const d = e.data.detail;
     if (!d && postDetail.dataset.kind === 'subreddit-commentary') return;
+    const shownInsightBefore = !postDetail.hidden && postDetail.dataset.kind === 'commentary'
+      ? shownInsightLabel : null;
     const token = ++postDetailToken;
     shownSubredditInsight = null;
+    shownInsightLabel = null;
     postDetail.replaceChildren();
     postDetail.style.removeProperty('--commentary-color');
     postDetail.hidden = !d;
@@ -750,7 +785,13 @@
       meta.className = 'meta';
       addText(meta, 'span', 'score', d.label);
       postDetail.append(meta, RedditPostContent.renderMarkdown(d.body));
+      shownInsightLabel = d.label;
       positionCommentaryDetail();
+      const anchorX = Number(e.data.pointerX);
+      if (shownInsightBefore !== d.label && Number.isFinite(anchorX)) {
+        const frameRect = sourceFrame.getBoundingClientRect();
+        animateCommentaryDetailFrom(frameRect.left + anchorX, frameRect.bottom - 5);
+      }
       return;
     }
 
@@ -875,6 +916,35 @@
         body.getBoundingClientRect().height + delta)) + 'px';
       e.preventDefault();
     });
+  }
+
+  // entrance animation: each section rises in the first time it scrolls into
+  // view; the ones already on screen at load stagger in one after another
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let initialSeen = 0;
+    const revealObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.style.setProperty('--reveal-delay', '0s');
+        void entry.target.offsetWidth;   // commit the hidden state so the transition runs
+        entry.target.classList.add('reveal-in');
+        revealObserver.unobserve(entry.target);
+      }
+    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+    for (const section of document.querySelectorAll('main .section')) {
+      section.classList.add('reveal-init');
+      const rect = section.getBoundingClientRect();
+      if (rect.top < window.innerHeight && rect.bottom > 0) {
+        // anything touching the viewport at load joins the opening cascade,
+        // even inside the observer's bottom margin (a section stuck there
+        // would otherwise stay invisible until the first scroll)
+        section.style.setProperty('--reveal-delay', (0.12 * initialSeen++) + 's');
+        void section.offsetWidth;
+        section.classList.add('reveal-in');
+      } else {
+        revealObserver.observe(section);
+      }
+    }
   }
 })();
 </script>

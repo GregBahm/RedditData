@@ -1064,6 +1064,7 @@
     const { w, band, share } = hit;
     setSdistHoverBand(band);
     const insight = subredditInsight(subName(band));
+    const score = sdistMetric === 'score';
     if (isEmbedded) {
       parent.postMessage({
         type: 'reddit-data-subreddit-insight',
@@ -1072,10 +1073,10 @@
         detail: insight ? {
           subreddit: subName(band),
           body: insight.body,
+          share: Math.round(share * 100) + (score ? '% of points' : '% of posts'),
         } : null,
       }, location.origin === 'null' ? '*' : location.origin);
     }
-    const score = sdistMetric === 'score';
     detail.replaceChildren();
     const meta = el('div', 'meta');
     meta.append(el('span', 'score', subName(band)));
@@ -1085,10 +1086,16 @@
       ? `${subWeeklyScore[band][w].toLocaleString()} of ${weeks[w].net.toLocaleString()} points that week unsmoothed`
       : `${subWeekly[band][w]} of ${weeks[w].count} that week unsmoothed`));
     detail.append(meta);
-    tip.textContent = subName(band) + ' · ' + Math.round(share * 100) + '%';
-    tip.style.display = 'block';
-    tip.style.left = cx + 'px';
-    tip.style.top = (cy - 12) + 'px';
+    if (isEmbedded && insight) {
+      // the commentary panel carries the name and share instead; a tooltip
+      // under it would just double up
+      tip.style.display = 'none';
+    } else {
+      tip.textContent = subName(band) + ' · ' + Math.round(share * 100) + '%';
+      tip.style.display = 'block';
+      tip.style.left = cx + 'px';
+      tip.style.top = (cy - 12) + 'px';
+    }
   }
 
   let timelinePublishPending = false;

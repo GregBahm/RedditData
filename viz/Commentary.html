@@ -135,11 +135,12 @@
     }, location.origin === 'null' ? '*' : location.origin);
   }
 
-  function publishDetail(index, isPinned, pointerY) {
+  function publishDetail(index, isPinned, pointerX, pointerY) {
     const insight = index >= 0 ? insights[index] : null;
     parent.postMessage({
       type: 'reddit-data-post-detail',
       pinned: isPinned,
+      pointerX,
       pointerY,
       detail: insight ? {
         kind: 'insight',
@@ -158,7 +159,7 @@
     if (index === hovered) return;
     hovered = index;
     if (pinned < 0) {
-      publishDetail(index, false, event.clientY);
+      publishDetail(index, false, event.clientX, event.clientY);
       publishFocus(index);
     }
     requestAnimationFrame(draw);
@@ -167,7 +168,7 @@
   canvas.addEventListener('pointerdown', event => {
     const rect = canvas.getBoundingClientRect();
     pinned = sectionAt(event.clientX - rect.left, event.clientY - rect.top);
-    publishDetail(pinned, pinned >= 0, event.clientY);
+    publishDetail(pinned, pinned >= 0, event.clientX, event.clientY);
     publishFocus(pinned);
     requestAnimationFrame(draw);
   });
@@ -175,7 +176,7 @@
   canvas.addEventListener('pointerleave', () => {
     hovered = -1;
     if (pinned < 0) {
-      publishDetail(-1, false, null);
+      publishDetail(-1, false, null, null);
       publishFocus(-1);
     }
     requestAnimationFrame(draw);
@@ -196,7 +197,7 @@
     if (event.data?.type === 'reddit-data-clear-selection') {
       hovered = -1;
       pinned = -1;
-      publishDetail(-1, false, null);
+      publishDetail(-1, false, null, null);
       publishFocus(-1);
       requestAnimationFrame(draw);
       return;
