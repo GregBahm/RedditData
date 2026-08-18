@@ -1,11 +1,21 @@
-# Reddit History Visualized
+# r/GregBahm's Reddit Addition Visualized
 
 **[View the live visualization](https://gregbahm.github.io/RedditData/)**
 
-![Path-traced 3D view of my Reddit posting history](gallery/BeautyShot.png)
+<p align="center">
+  <a href="https://gregbahm.github.io/RedditData/viz/Posts3dView.html"><img src="gallery/Posts.webp" width="32%" alt="Path-traced 3D view of Reddit posts"></a>
+  <a href="https://gregbahm.github.io/RedditData/viz/SubredditDistribution3dView.html"><img src="gallery/Subreddits.webp" width="32%" alt="Path-traced 3D view of subreddit activity"></a>
+  <a href="https://gregbahm.github.io/RedditData/viz/PostingPatterns3dView.html"><img src="gallery/TimeOfDay.webp" width="32%" alt="Path-traced 3D view of posting patterns by time of day"></a>
+</p>
 
 A visualizer for Reddit history: posts and comments, score data, subreddit
-distribution, trends, and path-traced 3D views.
+distribution, trends, posting patterns, historical commentary, and interactive
+path-traced 3D views.
+
+The dashboard combines linked 2D timelines and distributions with standalone
+3D views for posts, subreddit activity, and weekday/time-of-day patterns. The
+3D views include configurable lighting, glow, depth of field, saved tunings,
+and live-interaction recording with high-quality frame and MP4 export.
 
 ## Using the visualizer
 
