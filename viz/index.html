@@ -183,6 +183,34 @@
     font-size: 14px;
     font-weight: 650;
   }
+  .section-heading[data-info] { cursor: help; }
+  .section-heading .section-info {
+    display: inline-flex;
+    margin-left: 7px;
+    color: var(--muted);
+  }
+  .section-heading .section-info svg { display: block; width: 13px; height: 13px; }
+  .section-heading:hover .section-info { color: var(--secondary); }
+  #sectionInfo {
+    position: fixed;
+    z-index: 120;
+    display: none;
+    max-width: 340px;
+    padding: 10px 13px;
+    pointer-events: none;
+    color: var(--secondary);
+    font-size: 12.5px;
+    line-height: 1.5;
+    background: var(--surface);
+    border-radius: 12px;
+    box-shadow:
+      inset 0 2px 2px -1px rgba(255, 255, 255, 0.24),
+      inset 2px 0 2px -1px rgba(255, 255, 255, 0.08),
+      inset -2px 0 2px -1px rgba(0, 0, 0, 0.18),
+      inset 0 -2px 2px -1px rgba(0, 0, 0, 0.34),
+      0 14px 30px rgba(7, 10, 14, 0.55),
+      0 5px 12px rgba(7, 10, 14, 0.42);
+  }
   .section-body {
     height: var(--section-height);
   }
@@ -347,6 +375,7 @@
   <div class="import-actions">
     <span class="dataset-status" id="datasetStatus"></span>
     <a class="control" href="TopicBreakdown.html">Topic Breakdown</a>
+    <a class="control" href="https://github.com/GregBahm/RedditData" target="_blank" rel="noopener">Github Source</a>
     <button class="control" id="clearImported" type="button" hidden>Restore demo data</button>
     <button class="control" id="importOpen" type="button">Show me my own data</button>
   </div>
@@ -354,7 +383,7 @@
 <main>
   <section class="section persistent-controls">
     <div class="section-header">
-      <h2 class="section-heading" title="Posting activity over time">Posts</h2>
+      <h2 class="section-heading" data-info="Every post and comment on the account, plotted over time by score — squares are posts, dots are comments. Color shows pile-ups: lone items stay gray, heating up through blue, purple, and red to yellow where many land together.">Posts</h2>
       <a class="control section-view-link" href="Posts3dView.html" title="GPU-intensive 3D view">3D View</a>
       <div class="panel-controls" data-controls-for="posts" aria-label="Posts controls">
         <button class="control scale-control" type="button" data-frame="Posts" data-axis="Score" data-log="true">Score: log</button>
@@ -378,7 +407,7 @@
   </section>
   <section class="section persistent-controls">
     <div class="section-header">
-      <h2 class="section-heading" title="Subreddit activity over time">Subreddit Distribution</h2>
+      <h2 class="section-heading" data-info="Weekly activity stacked by subreddit, showing where the account spends its time. Switch between post counts and score, normalize to per-week shares, and adjust the smoothing window. Starred subreddits have commentary.">Subreddit Distribution</h2>
       <a class="control section-view-link" href="SubredditDistribution3dView.html" title="GPU-intensive 3D view">3D View</a>
       <div class="panel-controls" data-controls-for="subreddits" aria-label="Subreddit Distribution controls">
         <label><input type="radio" name="subredditMetric" value="posts" checked>Posts</label>
@@ -403,7 +432,7 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <h2 class="section-heading" title="Weekly posting and score metrics">Trends</h2>
+      <h2 class="section-heading" data-info="Weekly averages across the account's lifetime: posts per day, text written per day, net score per day, the share of items scoring above zero, average score, and average post length.">Trends</h2>
     </div>
     <div class="section-body" id="trends" style="--section-height: 720px">
       <iframe title="Trends" src="chart.html?embed=1&amp;view=trends" loading="eager"></iframe>
@@ -413,7 +442,7 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <h2 class="section-heading" title="Posts and comments by weekday and hour">Posting Patterns</h2>
+      <h2 class="section-heading" data-info="All posts and comments bucketed by weekday and hour of day (in your local time zone), colored from least to most active — a picture of when the posting happens.">Posting Patterns</h2>
       <a class="control section-view-link" href="PostingPatterns3dView.html" title="GPU-intensive 3D view">3D View</a>
     </div>
     <div class="section-body" id="postingPatterns" style="--section-height: 890px">
@@ -422,7 +451,7 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <h2 class="section-heading" title="Posts ranked by score">Score Distribution</h2>
+      <h2 class="section-heading" data-info="Every post and comment ranked from best to worst score. The long flat middle is the sea of one-point comments; the cliffs at the ends are the big hits and the downvoted.">Score Distribution</h2>
       <div class="panel-controls" data-controls-for="scores" aria-label="Score Distribution controls">
         <button class="control scale-control" type="button" data-frame="Score Distribution" data-axis="Score" data-log="true">Score: log</button>
       </div>
@@ -435,7 +464,7 @@
   </section>
   <section class="section">
     <div class="section-header">
-      <h2 class="section-heading" title="Posts ranked by text length">Post Length Distribution</h2>
+      <h2 class="section-heading" data-info="Every post and comment ranked from longest to shortest text, showing how often long wall-of-text writing happens versus quick one-liners.">Post Length Distribution</h2>
       <div class="panel-controls" data-controls-for="lengths" aria-label="Post Length Distribution controls">
         <button class="control scale-control" type="button" data-frame="Post Length Distribution" data-axis="Length" data-log="true">Length: log</button>
       </div>
@@ -448,6 +477,7 @@
   </section>
 </main>
 <div id="commentaryFocusBand" aria-hidden="true"></div>
+<div id="sectionInfo" role="tooltip"></div>
 <aside id="postDetail" aria-live="polite" hidden></aside>
 <dialog class="import-dialog" id="importDialog" aria-labelledby="importTitle">
   <div class="import-dialog-head">
@@ -916,6 +946,34 @@
         body.getBoundingClientRect().height + delta)) + 'px';
       e.preventDefault();
     });
+  }
+
+  // info popups: hovering a section heading or its icon shows a description
+  // of the section's data under the cursor (above it near the viewport edge)
+  const sectionInfo = document.getElementById('sectionInfo');
+  for (const heading of document.querySelectorAll('.section-heading[data-info]')) {
+    const icon = document.createElement('span');
+    icon.className = 'section-info';
+    icon.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+      '<circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+      '<circle cx="8" cy="4.9" r="0.95" fill="currentColor"/>' +
+      '<rect x="7.3" y="6.9" width="1.4" height="4.4" rx="0.7" fill="currentColor"/></svg>';
+    heading.append(icon);
+    const place = e => {
+      const rect = sectionInfo.getBoundingClientRect();
+      const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, e.clientX - 16));
+      let top = e.clientY + 20;
+      if (top + rect.height > window.innerHeight - 8) top = e.clientY - rect.height - 14;
+      sectionInfo.style.left = left + 'px';
+      sectionInfo.style.top = Math.max(8, top) + 'px';
+    };
+    heading.addEventListener('pointerenter', e => {
+      sectionInfo.textContent = heading.dataset.info;
+      sectionInfo.style.display = 'block';
+      place(e);
+    });
+    heading.addEventListener('pointermove', place);
+    heading.addEventListener('pointerleave', () => { sectionInfo.style.display = 'none'; });
   }
 
   // entrance animation: each section rises in the first time it scrolls into

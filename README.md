@@ -1,4 +1,4 @@
-# r/GregBahm's Reddit Addition Visualized
+# r/GregBahm's Reddit Addiction Visualized
 
 **[View the live visualization](https://gregbahm.github.io/RedditData/)**
 

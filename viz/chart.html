@@ -680,6 +680,31 @@
     ctx.rect(M.left, M.top, plotW(), plotH());
     ctx.clip();
 
+    // log-scale guides: a line at every integer score from ±1 toward ±20,
+    // hugging the left edge and fading out to the right, with the set as a
+    // whole dying away by ±20 — the compressing spacing makes the symlog
+    // axis read as log at a glance without gridding the whole plot
+    if (mode === 'time' && useLog) {
+      const fadeW = Math.min(plotW() * 0.35, 420);
+      const grad = ctx.createLinearGradient(M.left, 0, M.left + fadeW, 0);
+      grad.addColorStop(0, C.baseline);
+      grad.addColorStop(1, C.baseline + '00');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1;
+      for (let m = 1; m < 20; m++) {
+        ctx.globalAlpha = 1 - (m - 1) / 19;
+        for (const v of [m, -m]) {
+          const py = Math.round(yPix(symlog(v))) + 0.5;
+          if (py < M.top || py > H - M.bottom) continue;
+          ctx.beginPath();
+          ctx.moveTo(M.left, py);
+          ctx.lineTo(M.left + fadeW, py);
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
     if (mode === 'trends') {
       // six small-multiple sections, each metric normalized to its own
       // range, linear scale, smoothed by the shared slider
