@@ -430,11 +430,22 @@
   // 'dist': x = rank among all items, y = score. 'ldist': x = rank by length, y = length.
   let mode = 'time';
   let useLog = true;
+  let logMix = 1;   // 1 = fully log, 0 = fully linear; eases between on toggle
   const symlog = s => Math.sign(s) * Math.log10(1 + Math.abs(s));
+  // the log/linear morph mixes each value's NORMALIZED position under the
+  // two mappings; mixing raw values would let the linear term (orders of
+  // magnitude larger) dominate almost immediately and read as a jump
+  let byLog = { min: 0, max: 1 }, byLin = { min: 0, max: 1 };
+  const yNorm = r => {
+    const nLog = (symlog(r) - byLog.min) / (byLog.max - byLog.min);
+    if (logMix >= 1) return nLog;
+    const nLin = (r - byLin.min) / (byLin.max - byLin.min);
+    return logMix <= 0 ? nLin : logMix * nLog + (1 - logMix) * nLin;
+  };
   const activeList = () => mode === 'dist' ? distItems : mode === 'ldist' ? lenItems : items;
   const xv = d => mode === 'dist' ? d.drank : mode === 'ldist' ? d.lrank : d.time;
   const yvRaw = d => (mode === 'ltime' || mode === 'ldist') ? d.len : d.score;
-  const yv = d => useLog ? symlog(yvRaw(d)) : yvRaw(d);
+  const yv = d => yNorm(yvRaw(d));
 
   const M = { left: 56, right: 8, top: 28, bottom: 8 };
   let W = 0, H = 0, dpr = 1;
@@ -465,10 +476,14 @@
       }
       return;
     }
-    const ys = activeList().map(yv);
-    let ymin = Math.min(...ys), ymax = Math.max(...ys);
-    const pad = (ymax - ymin) * 0.04 || 1;
-    by = { min: ymin - pad, max: ymax + pad };
+    const raws = activeList().map(yvRaw);
+    const rmin = Math.min(...raws), rmax = Math.max(...raws);
+    const lpad = (rmax - rmin) * 0.04 || 1;
+    byLin = { min: rmin - lpad, max: rmax + lpad };
+    const smin = symlog(rmin), smax = symlog(rmax);
+    const spad = (smax - smin) * 0.04 || 1;
+    byLog = { min: smin - spad, max: smax + spad };
+    by = { min: 0, max: 1 };   // yv yields blended normalized positions
     if (mode === 'time' || mode === 'ltime') {
       const tpad = (t1 - t0) * 0.02 || 1;
       bx = { min: t0 - tpad, max: t1 + tpad };
@@ -477,6 +492,56 @@
       const rpad = n * 0.02 || 1;
       bx = { min: 1 - rpad, max: n + rpad };
     }
+  }
+
+  // animate the y scale between log and linear: logMix eases toward the
+  // target while the per-item values, the domain, ticks, and guides all
+  // re-blend every frame, so the marks morph rather than jump
+  let scaleAnimId = 0;
+  function animateScale() {
+    cancelAnimationFrame(scaleAnimId);
+    const target = useLog ? 1 : 0;
+    if (logMix === target) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      logMix = target;
+      requestAnimationFrame(draw);
+      return;
+    }
+    const from = logMix;
+    const start = performance.now();
+    const DUR = 600;
+    const step = now => {
+      const u = Math.min(1, (now - start) / DUR);
+      logMix = from + (target - from) * (1 - Math.pow(1 - u, 3));
+      draw();
+      if (u < 1) scaleAnimId = requestAnimationFrame(step);
+    };
+    step(start);   // first blended frame immediately, not a rAF later
+  }
+
+  // animate subreddit stack reorders (select / deselect): every band's
+  // stack bottom eases from its last drawn position to its slot in the
+  // new order — same motion as the log/linear morph
+  let stackMix = 1, stackAnimId = 0;
+  let sdistBotFrom = null, sdistBotShown = null;
+  function animateStack() {
+    cancelAnimationFrame(stackAnimId);
+    if (!sdistBotShown || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      stackMix = 1;
+      requestAnimationFrame(draw);
+      return;
+    }
+    sdistBotFrom = sdistBotShown;
+    const start = performance.now();
+    const DUR = 600;
+    const step = now => {
+      const u = Math.min(1, (now - start) / DUR);
+      stackMix = 1 - Math.pow(1 - u, 3);
+      draw();
+      if (u < 1) stackAnimId = requestAnimationFrame(step);
+    };
+    stackMix = 0;
+    step(start);   // first blended frame immediately
   }
 
   // pan/zoom transform in pixel space; y is inverted (bigger score = higher on screen)
@@ -542,7 +607,7 @@
           return py >= M.top - 4 && py <= H - M.bottom + 4;
         });
     }
-    if (!useLog || mode === 'sdist') {
+    if (mode === 'sdist') {
       const lo = yInv(H - M.bottom), hi = yInv(M.top);
       const span = hi - lo;
       const step = Math.pow(10, Math.floor(Math.log10(span / 6)));
@@ -556,11 +621,30 @@
       }
       return out;
     }
-    const out = [{ v: 0, label: '0' }];
+    if (!useLog) {
+      // linear ticks chosen in raw units (yInv yields the visible slice of
+      // the normalized axis), then blended into place alongside the data
+      const lo = byLin.min + yInv(H - M.bottom) * (byLin.max - byLin.min);
+      const hi = byLin.min + yInv(M.top) * (byLin.max - byLin.min);
+      const span = hi - lo;
+      const step = Math.pow(10, Math.floor(Math.log10(span / 6)));
+      const mult = span / 6 / step >= 5 ? 5 : span / 6 / step >= 2 ? 2 : 1;
+      const s = step * mult;
+      const out = [];
+      for (let i = Math.ceil(lo / s); i * s <= hi; i++) {
+        const v = i * s;
+        out.push({ v: yNorm(v), label: (v === 0 ? 0 : v).toLocaleString() });
+      }
+      return out.filter(t => {
+        const py = yPix(t.v);
+        return py >= M.top - 4 && py <= H - M.bottom + 4;
+      });
+    }
+    const out = [{ v: yNorm(0), label: '0' }];
     for (const m of [1, 10, 100, 1000, 10000, 100000]) {
       const lbl = m >= 1000 ? (m / 1000) + 'k' : String(m);
-      out.push({ v: symlog(m), label: lbl });
-      out.push({ v: symlog(-m), label: '−' + lbl });
+      out.push({ v: yNorm(m), label: lbl });
+      out.push({ v: yNorm(-m), label: '−' + lbl });
     }
     return out.filter(t => {
       const py = yPix(t.v);
@@ -647,7 +731,7 @@
       ctx.fillText(t.label, M.left - 8, Math.round(yPix(t.v)) + 0.5);
     }
     // zero line for score, slightly stronger
-    const zy = Math.round(yPix(0)) + 0.5;
+    const zy = Math.round(yPix(mode === 'sdist' || mode === 'trends' ? 0 : yNorm(0))) + 0.5;
     if (mode !== 'trends' && zy > M.top && zy < H - M.bottom) {
       ctx.strokeStyle = C.baseline;
       ctx.beginPath();
@@ -684,7 +768,7 @@
     // hugging the left edge and fading out to the right, with the set as a
     // whole dying away by ±20 — the compressing spacing makes the symlog
     // axis read as log at a glance without gridding the whole plot
-    if (mode === 'time' && useLog) {
+    if (mode === 'time' && logMix > 0) {
       const fadeW = Math.min(plotW() * 0.35, 420);
       const grad = ctx.createLinearGradient(M.left, 0, M.left + fadeW, 0);
       grad.addColorStop(0, C.baseline);
@@ -692,9 +776,9 @@
       ctx.strokeStyle = grad;
       ctx.lineWidth = 1;
       for (let m = 1; m < 20; m++) {
-        ctx.globalAlpha = 1 - (m - 1) / 19;
+        ctx.globalAlpha = (1 - (m - 1) / 19) * logMix;
         for (const v of [m, -m]) {
-          const py = Math.round(yPix(symlog(v))) + 0.5;
+          const py = Math.round(yPix(yNorm(v))) + 0.5;
           if (py < M.top || py > H - M.bottom) continue;
           ctx.beginPath();
           ctx.moveTo(M.left, py);
@@ -790,12 +874,35 @@
       }
       const EPS = 1e-4;
       const heightRef = sdistNorm ? 1 : by.max / 1.04;   // for label sizing
-      const cumShare = new Array(nW).fill(0);
       const labelSpots = [];
       // a selected band stacks first (bottom); hover/selection dims the rest
       const ord = [];
       if (sdistSelBand >= 0) ord.push(sdistSelBand);
       for (let k = 0; k < SBANDS - 1; k++) if (k !== sdistSelBand) ord.push(k);
+      const vFor = (k, w) => sdistNorm ? sdistSm[k][w] / totals[w] : sdistSm[k][w];
+      // per-band stack bottoms under the current order; while a reorder
+      // animates, ease each band from its snapshotted position
+      const bots = [];
+      {
+        const cum = new Array(nW).fill(0);
+        for (const k of ord) {
+          bots[k] = new Array(nW).fill(0);
+          for (let w = 0; w < nW; w++) {
+            if (totals[w] < EPS) continue;
+            bots[k][w] = cum[w];
+            cum[w] += vFor(k, w);
+          }
+        }
+      }
+      if (stackMix < 1 && sdistBotFrom && sdistBotFrom.length === bots.length &&
+          sdistBotFrom[ord[0]] && sdistBotFrom[ord[0]].length === nW) {
+        for (const k of ord) {
+          for (let w = 0; w < nW; w++) {
+            bots[k][w] = sdistBotFrom[k][w] * (1 - stackMix) + bots[k][w] * stackMix;
+          }
+        }
+      }
+      sdistBotShown = bots;
       const hasFocus = sdistHoverBand >= 0 || sdistSelBand >= 0;
       for (const k of ord) {
         // unfocused bands sit at 10% opacity: 90% of the way to the background
@@ -816,10 +923,9 @@
         };
         for (let w = 0; w < nW; w++) {
           if (totals[w] < EPS) { flush(); continue; }
-          const v = sdistNorm ? sdistSm[k][w] / totals[w] : sdistSm[k][w];
-          const bot = cumShare[w];
+          const v = vFor(k, w);
+          const bot = bots[k][w];
           const top = bot + v;
-          cumShare[w] = top;
           const x = xPix(weeks[w].t);
           seg.push({ x, yb: yPix(bot), yt: yPix(top) });
           const frac = v / heightRef;
@@ -1191,9 +1297,11 @@
     if (moved < 5 && mode === 'sdist') {
       const r = canvas.getBoundingClientRect();
       const hit = sdistBandAt(e.clientX - r.left, e.clientY - r.top);
+      const prevSel = sdistSelBand;
       sdistSelBand = hit ? hit.band : -1;   // empty space deselects
       if (!hit) publishClearSelection();
-      requestAnimationFrame(draw);
+      if (sdistSelBand !== prevSel) animateStack();
+      else requestAnimationFrame(draw);
       return;
     }
     if (moved < 5 && mode !== 'sdist' && mode !== 'trends') {
@@ -1248,10 +1356,9 @@
       if (useLog === e.data.value) return;
       useLog = e.data.value;
       toggleLabel();
-      computeBase();
       view.ky = 1;
       view.ty = 0;
-      requestAnimationFrame(draw);
+      animateScale();
       return;
     }
     if (e.data.action === 'zoom' && Number.isFinite(Number(e.data.value))) {
@@ -1422,10 +1529,9 @@
   scaleToggle.addEventListener('click', () => {
     useLog = !useLog;
     toggleLabel();
-    computeBase();
     view.ky = 1;
     view.ty = 0;
-    requestAnimationFrame(draw);
+    animateScale();
   });
 
   // view tabs
