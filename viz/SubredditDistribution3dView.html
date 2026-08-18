@@ -97,6 +97,13 @@
   .prow { display: flex; align-items: center; gap: 8px; }
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
+  .prow input[type=number] {
+    width: 62px;
+    font: inherit;
+    padding: 2px 4px;
+    border: 1px solid rgba(11, 11, 11, 0.2); border-radius: 4px;
+    background: #fff; color: inherit;
+  }
   .prow input[type=color] {
     width: 28px; height: 18px; padding: 0;
     border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
@@ -169,6 +176,7 @@
       <div class="prow"><span>focus distance</span><input type="range" id="cFocus" min="100" max="6000" step="10" value="2900"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.024"></div>
     </div>
+    <div class="prow"><span>accumulation</span><input type="number" id="cSpp" min="1" max="100000" step="50" value="500"></div>
     <div class="prow" id="tunRow">
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
@@ -705,15 +713,15 @@
   const target = { x: CW / 2, y: 0, z: -TOTAL * 0.45 };
   const FOV = 35 * Math.PI / 180;
   let frame = 0;
-  const MAX_SPP = 500;
-  const MAX_TRACE_MS = 45000; // active render-time cap per convergence run, whichever hits first
+  let maxSpp = 500;
+  const MAX_TRACE_MS = 45000; // active render-time cap per convergence run at the default 500 spp, whichever hits first; scales with the accumulation setting
   let traceMs = 0;
   let recording = null;
   let exporting = false;
   let renderDof = null;
 
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC', 'cDofOn', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC', 'cDofOn', 'cFocus', 'cAper', 'cSpp']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -750,6 +758,7 @@
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
   const light = {};
   function readLight() {
+    maxSpp = Math.max(1, Math.min(100000, Math.round(+ctl.cSpp.value) || 500));
     const az = +ctl.cAz.value * Math.PI / 180, el = +ctl.cEl.value * Math.PI / 180;
     light.sunDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
     light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
@@ -776,7 +785,9 @@
     ctl[id].addEventListener('input', () => {
       readLight();
       saveLight();
-      reset();
+      // a new accumulation target extends or trims the current render in
+      // place; every other control invalidates the accumulated image
+      if (id !== 'cSpp') reset();
       // editing while a saved tuning is selected makes this a new, unsaved
       // tuning: clear the selection to communicate that
       if (tunSel.value) refreshTunSel('');
@@ -786,9 +797,9 @@
   // ---- saved tunings ----
   // built-ins ship with the page; user-saved ones live in localStorage
   const BUILTIN_TUNINGS = [
-    { name: 'Default', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
-    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
-    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cFogC: '#d7dde2', cFogT: '50', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Default', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024', cSpp: '500' } },
+    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024', cSpp: '500' } },
+    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cFogC: '#d7dde2', cFogT: '50', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a', cDofOn: false, cFocus: '2900', cAper: '0.024', cSpp: '500' } },
   ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
@@ -932,17 +943,17 @@
     // idle a few frames so the driver can drain instead of piling up work
     if (frame > 0 && gap > 200) cooldown = 3;
     if (cooldown > 0) { cooldown--; requestAnimationFrame(loop); return; }
-    const done = frame >= MAX_SPP || traceMs > MAX_TRACE_MS;
+    const done = frame >= maxSpp || traceMs > MAX_TRACE_MS * Math.max(1, maxSpp / 500);
     if (!done) {
       wasDone = false;
       if (frame > 0) traceMs += Math.min(gap, 1000); // clamp so hidden-tab gaps don't count
       renderSample();
       if (frame % 10 === 0 || frame < 10) {
-        hint.textContent = `rendering ${Math.min(100, Math.round(frame / MAX_SPP * 100))}%`;
+        hint.textContent = `rendering ${Math.min(100, Math.round(frame / maxSpp * 100))}%`;
       }
     } else if (!wasDone) {
       wasDone = true;
-      hint.textContent = `rendering ${Math.min(100, Math.round(frame / MAX_SPP * 100))}%`;
+      hint.textContent = `rendering ${Math.min(100, Math.round(frame / maxSpp * 100))}%`;
     }
     requestAnimationFrame(loop);
   }

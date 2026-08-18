@@ -114,6 +114,13 @@
   .prow span { width: 80px; }
   .prow input[type=range] { width: 130px; margin: 0; }
   .prow output { width: 30px; text-align: right; }
+  .prow input[type=number] {
+    width: 62px;
+    font: inherit;
+    padding: 2px 4px;
+    border: 1px solid rgba(11, 11, 11, 0.2); border-radius: 4px;
+    background: #fff; color: inherit;
+  }
   .prow input[type=color] {
     width: 28px; height: 18px; padding: 0;
     border: 1px solid rgba(0, 0, 0, 0.2); border-radius: 3px; background: none;
@@ -223,6 +230,7 @@
       <div class="prow" id="focusRow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="160"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.024"></div>
     </div>
+    <div class="prow"><span>accumulation</span><input type="number" id="cSpp" min="1" max="100000" step="50" value="500"></div>
     <div class="prow" id="tunRow">
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
@@ -684,12 +692,12 @@
     }
     return { k, f };
   }
-  const MAX_SPP = 500;
+  let maxSpp = 500;
   const hint = document.getElementById('hint');
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cSpp']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -729,6 +737,7 @@
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
   const light = { sunDir: [0, 0, 1], sunE: [0, 0, 0], skyL: [0, 0, 0], albW: [0, 0, 0], sphBrightness: 1 };
   function readLight() {
+    maxSpp = Math.max(1, Math.min(100000, Math.round(+ctl.cSpp.value) || 500));
     const az = +ctl.cAz.value * Math.PI / 180, el = +ctl.cEl.value * Math.PI / 180;
     light.sunDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
     light.sunE = hex2lin(ctl.cSunC.value).map(c => c * +ctl.cSunI.value);
@@ -830,10 +839,10 @@
       });
       recBtn.textContent = '⏹ stop · ' + fmtTime((performance.now() - recording[0].t) / 1000);
     }
-    if (!exporting && frame < MAX_SPP) {
+    if (!exporting && frame < maxSpp) {
       renderSample();
       if (frame % 10 === 0 || frame < 10) {
-        hint.textContent = `rendering ${Math.min(100, Math.round(frame / MAX_SPP * 100))}%`;
+        hint.textContent = `rendering ${Math.min(100, Math.round(frame / maxSpp * 100))}%`;
       }
     }
     requestAnimationFrame(loop);
@@ -849,7 +858,9 @@
     ctl[id].addEventListener('input', () => {
       readLight();
       saveLight();
-      reset();
+      // a new accumulation target extends or trims the current render in
+      // place; every other control invalidates the accumulated image
+      if (id !== 'cSpp') reset();
       // editing while a saved tuning is selected makes this a new, unsaved
       // tuning: clear the selection to communicate that
       if (tunSel.value) refreshTunSel('');
@@ -858,7 +869,7 @@
 
   // ---- saved tunings ----
   const BUILTIN_TUNINGS = [
-    { name: 'Default', vals: { cAz: '25', cEl: '73', cSharp: '0', cSunC: '#cfbaaf', cSunI: '11.95', cSkyC: '#4977a2', cSkyI: '3.6', cFogC: '#161718', cFogT: '50', cSph: '2.2', cWall: '#212121', cBack: '#212121', cLbl: '#ffffff', cPickBg: '#0f0f0f', cPickTx: '#ffffff', cPersp: true, cDofOn: true, cPostM: true, cFocus: '160', cAper: '0.024' } },
+    { name: 'Default', vals: { cAz: '25', cEl: '73', cSharp: '0', cSunC: '#cfbaaf', cSunI: '11.95', cSkyC: '#4977a2', cSkyI: '3.6', cFogC: '#161718', cFogT: '50', cSph: '2.2', cWall: '#212121', cBack: '#212121', cLbl: '#ffffff', cPickBg: '#0f0f0f', cPickTx: '#ffffff', cPersp: true, cDofOn: true, cPostM: true, cFocus: '160', cAper: '0.024', cSpp: '500' } },
   ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
