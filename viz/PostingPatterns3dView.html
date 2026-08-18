@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Subreddits in 3D</title>
+<title>Posting Patterns in 3D</title>
 <style>
   * { margin: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
@@ -19,6 +19,15 @@
     position: fixed; right: 14px; bottom: 10px;
     font-size: 12px; color: #898781; pointer-events: none;
   }
+  #tip {
+    position: fixed; z-index: 8; display: none;
+    min-width: 170px; padding: 8px 10px;
+    background: rgba(252, 252, 251, 0.94);
+    border-radius: 8px; color: #52514e;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    font-size: 12px; line-height: 1.35; pointer-events: none;
+  }
+  #tip strong { display: block; color: #0b0b0b; font-size: 15px; }
   #rotatePad {
     position: fixed; top: 14px; right: 14px;
     z-index: 6;
@@ -143,6 +152,7 @@
 <canvas id="gl"></canvas>
 <a id="back2d" href="index.html">2D View</a>
 <div id="hint">rendering 0%</div>
+<div id="tip" role="status"></div>
 <button id="rotatePad" type="button" aria-label="Rotate view" title="Drag to rotate view">
   <span class="viewCube" aria-hidden="true">
     <i class="front"></i><i class="back"></i><i class="right"></i>
@@ -152,21 +162,26 @@
 <div id="panel" class="closed">
   <div id="panelHead">tuning <span id="panelArrow">▸</span></div>
   <div id="panelBody">
-    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="155"></div>
-    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="10"></div>
-    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="7"></div>
-    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff0db"><input type="range" id="cSunI" min="0" max="200" step="0.05" value="40"></div>
-    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#2a464c"><input type="range" id="cSkyI" min="0" max="100" step="0.05" value="20"></div>
-    <div class="prow"><span>fog color</span><input type="color" id="cFogC" value="#d7dde2"></div>
+    <div class="prow"><span>sun azimuth</span><input type="range" id="cAz" min="-180" max="180" value="-136"></div>
+    <div class="prow"><span>sun height</span><input type="range" id="cEl" min="3" max="87" value="32"></div>
+    <div class="prow"><span>sun sharpness</span><input type="range" id="cSharp" min="0" max="100" value="0"></div>
+    <div class="prow"><span>sun</span><input type="color" id="cSunC" value="#fff0db"><input type="range" id="cSunI" min="0" max="200" step="0.05" value="0.7"></div>
+    <div class="prow"><span>ambient</span><input type="color" id="cSkyC" value="#2a464c"><input type="range" id="cSkyI" min="0" max="100" step="0.05" value="1.75"></div>
+    <div class="prow"><span>fog color</span><input type="color" id="cFogC" value="#00192e"></div>
     <div class="prow"><span>fog thickness</span><input type="range" id="cFogT" min="0" max="100" step="1" value="50"></div>
-    <div class="prow"><span>opacity</span><input type="range" id="cOpac" min="0" max="100" value="45"></div>
-    <div class="prow"><span>frost</span><input type="range" id="cFrost" min="0" max="100" value="60"></div>
-    <div class="prow"><span>bar scale</span><input type="range" id="cScale" min="5" max="300" value="100"></div>
-    <div class="prow"><span>ground</span><input type="color" id="cBack" value="#8f8f8f"></div>
-    <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#000000"></div>
+    <div class="prow"><span>opacity</span><input type="range" id="cOpac" min="0" max="100" value="8"></div>
+    <div class="prow"><span>frost</span><input type="range" id="cFrost" min="0" max="100" value="71"></div>
+    <div class="prow"><span>bar height</span><input type="range" id="cScale" min="5" max="300" value="257"></div>
+    <div class="prow"><span>bar thickness</span><input type="range" id="cThick" min="20" max="100" value="48"></div>
+    <div class="prow"><span>low glow</span><input type="range" id="cGlowLow" min="0" max="10" step="0.01" value="0"></div>
+    <div class="prow"><span>high glow</span><input type="range" id="cGlowHigh" min="0" max="10" step="0.01" value="5.02"></div>
+    <div class="prow"><span>glow ramp</span><input type="range" id="cGlowRamp" min="0" max="100" value="0"></div>
+    <div class="prow"><span>ground</span><input type="color" id="cBack" value="#9e9e9e"></div>
+    <div class="prow"><span>labels</span><input type="color" id="cLblC" value="#ffffff"></div>
     <div class="prow"><span>depth of field</span><input type="checkbox" id="cDofOn"></div>
     <div id="dofRows" class="off">
-      <div class="prow"><span>focus distance</span><input type="range" id="cFocus" min="100" max="6000" step="10" value="2900"></div>
+      <div class="prow"><span>bar mode</span><input type="checkbox" id="cBarM"></div>
+      <div class="prow" id="focusRow"><span>focus distance</span><input type="range" id="cFocus" min="100" max="6000" step="10" value="2900"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.024"></div>
     </div>
     <div class="prow" id="tunRow">
@@ -184,51 +199,29 @@
 <script src="import/dataset-store.js"></script>
 <script>
 (async () => {
-  // ---- data: weekly subreddit composition, top 50, smoothed, absolute ----
+  // ---- data: weekday rows, hour columns, combined posts and comments ----
   const sourceData = await RedditDataset.getActive(REDDIT_DATA);
-  const items = sourceData.map(d => ({
-    sub: d.sub,
-    time: Date.parse(d.date.replace(' UTC', 'Z').replace(' ', 'T')),
-  })).filter(d => Number.isFinite(d.time));
-  items.sort((a, b) => a.time - b.time);
-  const t0 = items[0].time, t1 = items[items.length - 1].time;
-  const MS_WEEK = 6048e5;
-  const w0 = (() => {
-    const d = new Date(t0);
-    const day = (d.getUTCDay() + 6) % 7;
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
-  })();
-  const nW = Math.floor((t1 - w0) / MS_WEEK) + 1;
-  const subTotals = new Map();
-  for (const d of items) subTotals.set(d.sub, (subTotals.get(d.sub) || 0) + 1);
-  const topSubs = [...subTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 50).map(e => e[0]);
-  const subIndex = new Map(topSubs.map((s, i) => [s, i]));
-  const nB = topSubs.length;
-  const subWeekly = Array.from({ length: nB }, () => new Array(nW).fill(0));
-  for (const d of items) {
-    const k = subIndex.get(d.sub);
-    if (k === undefined) continue;
-    subWeekly[k][Math.floor((d.time - w0) / MS_WEEK)]++;
+  const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const nB = dayNames.length;
+  const hourCounts = Array.from({ length: nB }, () => new Array(24).fill(0));
+  for (const item of sourceData) {
+    const date = new Date(item.date.replace(' UTC', 'Z').replace(' ', 'T'));
+    if (!Number.isFinite(date.getTime())) continue;
+    const day = (date.getDay() + 6) % 7;
+    hourCounts[day][date.getHours()]++;
   }
-  const SIGMA = 7.58;   // ~30 week window, matching the 2D default
-  function smoothSeries(vals, sigma) {
-    const radius = Math.ceil(sigma * 3);
-    const kernel = Array.from({ length: radius + 1 }, (_, k) => Math.exp(-(k * k) / (2 * sigma * sigma)));
-    return vals.map((_, i) => {
-      let sum = 0, wsum = 0;
-      for (let j = Math.max(0, i - radius); j <= Math.min(vals.length - 1, i + radius); j++) {
-        const w = kernel[Math.abs(j - i)];
-        sum += vals[j] * w;
-        wsum += w;
+  const samplesPerHour = 12;
+  const sm = hourCounts.map(hours => {
+    const samples = new Array(24 * samplesPerHour + 1).fill(0);
+    for (let hour = 0; hour < 24; hour++) {
+      for (let sample = 0; sample < samplesPerHour; sample++) {
+        samples[hour * samplesPerHour + sample] = hours[hour];
       }
-      return wsum > 0 ? sum / wsum : 0;
-    });
-  }
-  const sm = subWeekly.map(a => smoothSeries(a, SIGMA).map(v => Math.max(0, v)));
-  const totals = new Array(nW).fill(0);
-  for (let k = 0; k < nB; k++) for (let w = 0; w < nW; w++) totals[w] += sm[k][w];
-  let wA = 0; while (wA < nW && totals[wA] < 1e-3) wA++;
-  let wB = nW - 1; while (wB > wA && totals[wB] < 1e-3) wB--;
+    }
+    return samples;
+  });
+  const wA = 0;
+  const wB = 24 * samplesPerHour;
 
   // golden-angle palette, matching the 2D view
   function hslToRgb(h, s, l) {
@@ -242,10 +235,9 @@
   const bandColor = k => hslToRgb((k * 137.508) % 360, (55 + (k % 2) * 12) / 100, (50 + (k % 3) * 6) / 100);
 
   // ---- scene dimensions ----
-  // Ground plane at y=0 in XZ space. Each subreddit is its own slice: an
-  // extruded area chart (time along x, height in y, thickness TH along z),
-  // laid out back from z=0 with a GAP between slices.
-  const CW = 2000, HMAX = 380, TH = 11, GAP = 25;
+  // Ground plane at y=0 in XZ space. Weekdays are rows along z and hours are
+  // columns along x. TH and the zero-height edge margin separate every bar.
+  const CW = 2400, HMAX = 420, TH = 70, GAP = 55;
   const P = TH + GAP;
   const TOTAL = (nB - 1) * P + TH;
   const X = w => wA === wB ? CW / 2 : (w - wA) / (wB - wA) * CW;
@@ -255,9 +247,7 @@
     for (let w = wA; w <= wB; w++) if (sm[k][w] > peakSub) peakSub = sm[k][w];
   }
   const yScale = HMAX / peakSub;
-  // height texture rows: row k = slice k's height at each week, world units.
-  // Sub-unit heights (pure smoothing tails) are culled to exact zero so dead
-  // weeks leave clean ground instead of a coplanar film over the floor.
+  // Height texture rows contain 24 hour values plus one terminal zero sample.
   const hData = new Float32Array(nCols * nB);
   for (let k = 0; k < nB; k++) {
     for (let w = wA; w <= wB; w++) {
@@ -268,8 +258,7 @@
   // z center of slice k
   const sliceZ = k => -(k * P + TH / 2);
 
-  // ---- ink texture: labels painted on the ground plane ----
-  // years along the front edge, subreddit names beside each slice
+  // ---- ink texture: hour columns and weekday rows painted on the ground ----
   const IX0 = -460, IX1 = CW + 60, IZF = 150, IZB = -(TOTAL + 60);
   const TEXW = 3072;
   const TEXH = Math.round(TEXW * (IZF - IZB) / (IX1 - IX0));
@@ -282,22 +271,17 @@
   const ig = inkCv.getContext('2d');
   ig.textBaseline = 'middle';
   ig.fillStyle = '#000';   // only alpha is read; color comes from the labels control
-  ig.font = `600 ${Math.round(34 * texScale)}px system-ui, sans-serif`;
+  ig.font = `600 ${Math.round(24 * texScale)}px system-ui, sans-serif`;
   ig.textAlign = 'center';
-  const y0year = new Date(w0 + wA * MS_WEEK).getUTCFullYear() + 1;
-  const y1year = new Date(w0 + wB * MS_WEEK).getUTCFullYear();
-  const yearStep = (window.innerWidth - 80) /
-    Math.max(1, y1year - y0year + 1) < 52 ? 2 : 1;
-  for (let y = y0year; y <= y1year; y += yearStep) {
-    const t = Date.UTC(y, 0, 1);
-    const w = (t - w0) / MS_WEEK;
-    if (w < wA || w > wB) continue;
-    ig.fillText(String(y), toTX(X(w)), toTZ(75));
+  for (let hour = 0; hour < 24; hour++) {
+    const label = hour === 0 ? '12a' : hour < 12 ? `${hour}a`
+      : hour === 12 ? '12p' : `${hour - 12}p`;
+    ig.fillText(label, toTX(X(hour * samplesPerHour + samplesPerHour / 2)), toTZ(82));
   }
-  ig.font = `600 ${Math.round(22 * texScale)}px system-ui, sans-serif`;
+  ig.font = `600 ${Math.round(26 * texScale)}px system-ui, sans-serif`;
   ig.textAlign = 'right';
   for (let k = 0; k < nB; k++) {
-    ig.fillText('r/' + topSubs[k], toTX(-35), toTZ(sliceZ(k)));
+    ig.fillText(dayNames[k], toTX(-35), toTZ(sliceZ(k)));
   }
 
   // ---- gl ----
@@ -343,15 +327,21 @@
   uniform float uTrans;
   uniform float uFrostCos;
   uniform float uHScale;
+  uniform float uThickness;
+  uniform float uGlowLow;
+  uniform float uGlowHigh;
+  uniform float uGlowRamp;
+  uniform ivec2 uHoverBar;
   out vec4 outc;
 
   const float CW = ${CW.toFixed(1)};
   const float HMAX = ${(HMAX * 3.0).toFixed(1)};   // box height: peak at max bar scale
-  const float TH = ${TH.toFixed(1)};
+  const float THMAX = ${TH.toFixed(1)};
   const float PP = ${P.toFixed(1)};
   const float TOTU = ${TOTAL.toFixed(1)};
   const int NB = ${nB};
   const int NC = ${nCols};
+  const int SPH = ${samplesPerHour};
   const float PI = 3.14159265;
   const float HMIN = 0.5;   // solid thinner than this is treated as empty
   const float SLICE_Y = 0.75;
@@ -364,19 +354,43 @@
   }
   float rnd(inout uint s) { return float(pcg(s)) / 4294967296.0; }
 
-  float hK(int k, float x) {
+  float rawK(int k, float x) {
     float u = clamp(x / CW, 0.0, 1.0) * float(NC - 1);
-    int i = int(floor(u));
-    int i1 = min(i + 1, NC - 1);
-    float f = u - float(i);
-    return mix(texelFetch(uH, ivec2(i, k), 0).r, texelFetch(uH, ivec2(i1, k), 0).r, f) * uHScale;
+    int i = min(int(floor(u)), NC - 1);
+    return texelFetch(uH, ivec2(i, k), 0).r;
+  }
+  float hK(int k, float x) {
+    return rawK(k, x) * uHScale;
+  }
+  float cellRaw(int k, int column) {
+    int localColumn = column % SPH;
+    float localCenter = (float(localColumn) + 0.5) / float(SPH);
+    if (abs(localCenter - 0.5) > uThickness * 0.5) return 0.0;
+    return texelFetch(uH, ivec2(column, k), 0).r;
+  }
+  float thickZ() { return THMAX * uThickness; }
+  float marginZ() { return (THMAX - thickZ()) * 0.5; }
+  vec3 heatColor(float t) {
+    vec3 c0 = vec3(137, 135, 129) / 255.0;
+    vec3 c1 = vec3(42, 120, 214) / 255.0;
+    vec3 c2 = vec3(139, 58, 199) / 255.0;
+    vec3 c3 = vec3(227, 61, 61) / 255.0;
+    vec3 c4 = vec3(239, 126, 34) / 255.0;
+    vec3 c5 = vec3(245, 211, 39) / 255.0;
+    float x = clamp(t, 0.0, 1.0) * 5.0;
+    if (x < 1.0) return mix(c0, c1, x);
+    if (x < 2.0) return mix(c1, c2, x - 1.0);
+    if (x < 3.0) return mix(c2, c3, x - 2.0);
+    if (x < 4.0) return mix(c3, c4, x - 3.0);
+    return mix(c4, c5, x - 4.0);
   }
 
   // kind: 0 sky, 1 ground, 3 slice
-  struct HitInfo { float t; vec3 n; vec3 alb; int kind; };
+  struct HitInfo { float t; vec3 n; vec3 alb; float level; ivec2 cell; int kind; };
   HitInfo trace(vec3 o, vec3 d, int budget) {
     HitInfo h;
     h.t = 1e30; h.kind = 0; h.n = vec3(0.0, 1.0, 0.0); h.alb = vec3(0.0);
+    h.level = 0.0; h.cell = ivec2(-1);
     float eps = 0.05;
     // ground plane y=0
     if (d.y < -1e-7) {
@@ -403,12 +417,13 @@
       t1 = min(t1, max(ta, tb));
     } else if (o.y < SLICE_Y || o.y > SLICE_Y + HMAX) return h;
     float uo = -o.z, du = -d.z;
+    float th = thickZ(), zm = marginZ(), qo = uo - zm;
     if (abs(du) > 1e-7) {
-      float ta = -uo / du, tb = (TOTU - uo) / du;
+      float ta = -qo / du, tb = ((float(NB - 1) * PP + th) - qo) / du;
       float lo = min(ta, tb);
       if (lo > t0) { t0 = lo; axisEnter = 2; }
       t1 = min(t1, max(ta, tb));
-    } else if (uo < 0.0 || uo > TOTU) return h;
+    } else if (qo < 0.0 || qo > float(NB - 1) * PP + th) return h;
     if (t1 <= t0) return h;
 
     // Walk the ray through weekly x-columns and slice/gap z-bands.  Within a
@@ -423,9 +438,9 @@
     // band region index: even 2k = slice k, odd 2k+1 = gap behind slice k
     int ir;
     {
-      float u0 = uo + du * t0;
+      float u0 = qo + du * t0;
       int k0 = clamp(int(floor(u0 / PP)), 0, NB - 1);
-      ir = 2 * k0 + ((u0 - float(k0) * PP) > TH ? 1 : 0);
+      ir = 2 * k0 + ((u0 - float(k0) * PP) > th ? 1 : 0);
     }
     float tcur = t0;
     for (int it = 0; it < budget; it++) {
@@ -437,35 +452,42 @@
       float tExitU = 1e30;
       if (abs(du) > 1e-7) {
         int kr = ir >> 1;
-        float ub = du > 0.0
-          ? ((ir & 1) == 0 ? float(kr) * PP + TH : float(kr + 1) * PP)
-          : ((ir & 1) == 0 ? float(kr) * PP : float(kr) * PP + TH);
-        tExitU = (ub - uo) / du;
+        float qb = du > 0.0
+          ? ((ir & 1) == 0 ? float(kr) * PP + th : float(kr + 1) * PP)
+          : ((ir & 1) == 0 ? float(kr) * PP : float(kr) * PP + th);
+        tExitU = (qb - qo) / du;
       }
       float tEnd = min(min(tExitX, tExitU), t1);
       int k = ir >> 1;
       if ((ir & 1) == 0 && tEnd > tcur) {
+        float rawHeight = cellRaw(k, ic);
+        float cellHeight = rawHeight * uHScale;
         vec3 pa = o + d * tcur;
-        float ga = pa.y - (SLICE_Y + hK(k, pa.x));
-        if (ga <= 0.0 && hK(k, pa.x) > HMIN) {
+        float ga = pa.y - (SLICE_Y + cellHeight);
+        if (ga <= 0.0 && cellHeight > HMIN) {
           // segment starts inside the solid: the ray came in through a flat
           // cap face
           vec3 n = axisEnter == 0 ? vec3(d.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0)
               : axisEnter == 1 ? vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0)
                                : vec3(0.0, 0.0, d.z > 0.0 ? -1.0 : 1.0);
-          h.t = tcur; h.kind = 3; h.n = n; h.alb = uCols[k];
+          h.t = tcur; h.kind = 3; h.n = n;
+          h.alb = heatColor(rawHeight / ${(HMAX).toFixed(1)});
+          h.level = clamp(rawHeight / ${(HMAX).toFixed(1)}, 0.0, 1.0);
+          h.cell = ivec2(k, ic / SPH);
           return h;
         }
         vec3 pb = o + d * tEnd;
-        float gb = pb.y - (SLICE_Y + hK(k, pb.x));
+        float gb = pb.y - (SLICE_Y + cellHeight);
         if (ga > 0.0 && gb <= 0.0) {
           float tt = tcur + (tEnd - tcur) * ga / (ga - gb);
           if (o.y + d.y * tt > SLICE_Y + HMIN) {
             vec3 ph = o + d * tt;
-            float db = (hK(k, min(ph.x + 4.0, CW)) - hK(k, max(ph.x - 4.0, 0.0))) / 8.0;
-            vec3 n = normalize(vec3(-db, 1.0, 0.0));
+            vec3 n = vec3(0.0, 1.0, 0.0);
             if (dot(n, d) > 0.0) n = -n;
-            h.t = tt; h.kind = 3; h.n = n; h.alb = uCols[k];
+            h.t = tt; h.kind = 3; h.n = n;
+            h.alb = heatColor(rawHeight / ${(HMAX).toFixed(1)});
+            h.level = clamp(rawHeight / ${(HMAX).toFixed(1)}, 0.0, 1.0);
+            h.cell = ivec2(k, ic / SPH);
             return h;
           }
         }
@@ -488,25 +510,27 @@
   // ray that just passed inside one (frosted-glass transmission)
   float traceExit(vec3 o, vec3 d, int budget) {
     float uo = -o.z, du = -d.z;
+    float th = thickZ(), zm = marginZ(), qo = uo - zm;
     float t1 = 1e30;
     if (abs(d.x) > 1e-7) t1 = min(t1, max(-o.x / d.x, (CW - o.x) / d.x));
     if (abs(d.y) > 1e-7) {
       t1 = min(t1, max((SLICE_Y - o.y) / d.y, (SLICE_Y + HMAX - o.y) / d.y));
     }
-    if (abs(du) > 1e-7) t1 = min(t1, max(-uo / du, (TOTU - uo) / du));
+    if (abs(du) > 1e-7) t1 = min(t1, max(-qo / du, (float(NB - 1) * PP + th - qo) / du));
     float colW = CW / float(NC - 1);
     int ic = clamp(int(floor(o.x / colW)), 0, NC - 2);
     int ir;
     {
-      int k0 = clamp(int(floor(uo / PP)), 0, NB - 1);
-      ir = 2 * k0 + ((uo - float(k0) * PP) > TH ? 1 : 0);
+      int k0 = clamp(int(floor(qo / PP)), 0, NB - 1);
+      ir = 2 * k0 + ((qo - float(k0) * PP) > th ? 1 : 0);
     }
     float tcur = 0.0;
     for (int it = 0; it < budget; it++) {
       if ((ir & 1) == 1) return tcur;               // in a gap: outside
       int k = ir >> 1;
+      float cellHeight = cellRaw(k, ic) * uHScale;
       vec3 pa = o + d * tcur;
-      float ga = pa.y - (SLICE_Y + hK(k, pa.x));
+      float ga = pa.y - (SLICE_Y + cellHeight);
       if (ga > 0.0) return tcur;                    // above the surface
       float x0c = float(ic) * colW;
       float tExitX; int iNext;
@@ -515,12 +539,12 @@
       else { tExitX = 1e30; iNext = -1; }
       float tExitU = 1e30;
       if (abs(du) > 1e-7) {
-        float ub = du > 0.0 ? float(k) * PP + TH : float(k) * PP;
-        tExitU = (ub - uo) / du;
+        float qb = du > 0.0 ? float(k) * PP + th : float(k) * PP;
+        tExitU = (qb - qo) / du;
       }
       float tEnd = min(min(tExitX, tExitU), t1);
       vec3 pb = o + d * tEnd;
-      float gb = pb.y - (SLICE_Y + hK(k, pb.x));
+      float gb = pb.y - (SLICE_Y + cellHeight);
       if (gb > 0.0 && tEnd > tcur) {
         return tcur + (tEnd - tcur) * (0.0 - ga) / (gb - ga);   // out the top
       }
@@ -588,6 +612,14 @@
           float a = texture(uInk, uv).a;
           if (a > 0.01) alb = mix(alb, uLblC, a);
         }
+      }
+      if (h.kind == 3) {
+        float highContribution = pow(h.level, uGlowRamp);
+        float glow = mix(uGlowLow, uGlowHigh, highContribution);
+        if (uHoverBar.x >= 0) {
+          glow = all(equal(h.cell, uHoverBar)) ? uGlowHigh : uGlowLow;
+        }
+        L += tp * alb * glow;
       }
       // frosted-glass transmission: tinted, blurred pass straight through
       // the slice; the ray resumes from the slice's far surface
@@ -701,7 +733,7 @@
   }
 
   // ---- camera & lighting state ----
-  let yaw = 0.45, pitch = 0.55, dist = 2900;
+  let yaw = 0.45, pitch = 0.55, dist = 3300;
   const target = { x: CW / 2, y: 0, z: -TOTAL * 0.45 };
   const FOV = 35 * Math.PI / 180;
   let frame = 0;
@@ -711,9 +743,10 @@
   let recording = null;
   let exporting = false;
   let renderDof = null;
+  let hoveredBar = null;
 
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cOpac', 'cFrost', 'cScale', 'cBack', 'cLblC', 'cDofOn', 'cFocus', 'cAper']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cOpac', 'cFrost', 'cScale', 'cThick', 'cGlowLow', 'cGlowHigh', 'cGlowRamp', 'cBack', 'cLblC', 'cDofOn', 'cBarM', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
@@ -739,13 +772,13 @@
     return out;
   };
   try {
-    const saved = JSON.parse(localStorage.getItem('sd3d-light-v2') || 'null');
+    const saved = JSON.parse(localStorage.getItem('pp3d-light-v2') || 'null');
     if (saved) for (const id in ctl) if (saved[id] !== undefined) setV(ctl[id], saved[id]);
   } catch (e) {}
   const saveLight = () => {
     const vals = {};
     for (const id in ctl) vals[id] = getV(ctl[id]);
-    localStorage.setItem('sd3d-light-v2', JSON.stringify(vals));
+    localStorage.setItem('pp3d-light-v2', JSON.stringify(vals));
   };
   const hex2lin = h => [1, 3, 5].map(i => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
   const light = {};
@@ -766,9 +799,17 @@
     const frostAngle = 0.5 * Math.pow(40, +ctl.cFrost.value / 100) * Math.PI / 180;
     light.frostCos = Math.cos(frostAngle);
     light.hScale = +ctl.cScale.value / 100;
+    light.thickness = +ctl.cThick.value / 100;
+    const glowScale = value => value;
+    light.glowLow = glowScale(+ctl.cGlowLow.value);
+    light.glowHigh = glowScale(+ctl.cGlowHigh.value);
+    const midpointHigh = 0.01 + 0.98 * (+ctl.cGlowRamp.value / 100);
+    light.glowRamp = Math.log(midpointHigh) / Math.log(0.5);
     light.dofK = ctl.cDofOn.checked ? +ctl.cAper.value : 0;
+    light.barMode = ctl.cBarM.checked;
     light.focusDist = +ctl.cFocus.value;
     document.getElementById('dofRows').classList.toggle('off', !ctl.cDofOn.checked);
+    document.getElementById('focusRow').style.display = ctl.cBarM.checked ? 'none' : '';
   }
   readLight();
   const reset = () => { frame = 0; traceMs = 0; };
@@ -786,17 +827,16 @@
   // ---- saved tunings ----
   // built-ins ship with the page; user-saved ones live in localStorage
   const BUILTIN_TUNINGS = [
-    { name: 'Default', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
-    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
-    { name: 'Tuning 2', vals: { cAz: '148', cEl: '26', cSharp: '7', cSunC: '#ffffff', cSunI: '15.8', cSkyC: '#7b3d3d', cSkyI: '6.65', cFogC: '#d7dde2', cFogT: '50', cOpac: '69', cFrost: '100', cScale: '150', cBack: '#18192f', cLblC: '#4a4a4a', cDofOn: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Default', vals: { cAz: '-136', cEl: '32', cSharp: '0', cSunC: '#fff0db', cSunI: '0.7', cSkyC: '#2a464c', cSkyI: '1.75', cFogC: '#00192e', cFogT: '50', cOpac: '8', cFrost: '71', cScale: '257', cThick: '48', cGlowLow: '0', cGlowHigh: '5.02', cGlowRamp: '0', cBack: '#9e9e9e', cLblC: '#ffffff', cDofOn: false, cBarM: false, cFocus: '2900', cAper: '0.024' } },
+    { name: 'Tuning 1', vals: { cAz: '155', cEl: '10', cSharp: '7', cSunC: '#fff0db', cSunI: '40', cSkyC: '#2a464c', cSkyI: '20', cFogC: '#d7dde2', cFogT: '50', cOpac: '45', cFrost: '60', cScale: '100', cThick: '72', cGlowLow: '0', cGlowHigh: '0', cGlowRamp: '50', cBack: '#8f8f8f', cLblC: '#000000', cDofOn: false, cBarM: false, cFocus: '2900', cAper: '0.024' } },
   ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
   const tunDel = document.getElementById('tunDel');
   let userTunings = [];
-  try { userTunings = JSON.parse(localStorage.getItem('sd3d-tunings') || '[]'); } catch (e) {}
+  try { userTunings = JSON.parse(localStorage.getItem('pp3d-tunings') || '[]'); } catch (e) {}
   const allTunings = () => [...BUILTIN_TUNINGS, ...userTunings.filter(t => !BUILTIN_TUNINGS.some(b => b.name === t.name))];
-  const saveTunings = () => localStorage.setItem('sd3d-tunings', JSON.stringify(userTunings));
+  const saveTunings = () => localStorage.setItem('pp3d-tunings', JSON.stringify(userTunings));
   function refreshTunSel(sel) {
     tunSel.replaceChildren();
     const o0 = document.createElement('option');
@@ -810,7 +850,7 @@
       tunSel.append(o);
     }
     tunSel.value = sel || '';
-    localStorage.setItem('sd3d-tuning-sel', tunSel.value);
+    localStorage.setItem('pp3d-tuning-sel', tunSel.value);
   }
   tunSave.addEventListener('click', () => {
     let n = 0;
@@ -831,7 +871,7 @@
     refreshTunSel('');
   });
   tunSel.addEventListener('change', () => {
-    localStorage.setItem('sd3d-tuning-sel', tunSel.value);
+    localStorage.setItem('pp3d-tuning-sel', tunSel.value);
     const t = allTunings().find(x => x.name === tunSel.value);
     if (!t) return;
     for (const id in ctl) if (t.vals[id] !== undefined) setV(ctl[id], t.vals[id]);
@@ -839,17 +879,17 @@
     saveLight();
     reset();
   });
-  refreshTunSel(localStorage.getItem('sd3d-tuning-sel') ?? 'Default');
+  refreshTunSel(localStorage.getItem('pp3d-tuning-sel') ?? 'Default');
   const panel = document.getElementById('panel');
   const panelArrow = document.getElementById('panelArrow');
   const setPanel = closed => {
     panel.classList.toggle('closed', closed);
     panelArrow.textContent = closed ? '▸' : '▾';
-    localStorage.setItem('sd3d-panel-closed', closed ? '1' : '0');
+    localStorage.setItem('pp3d-panel-closed', closed ? '1' : '0');
   };
   document.getElementById('panelHead').addEventListener('click', () =>
     setPanel(!panel.classList.contains('closed')));
-  setPanel(localStorage.getItem('sd3d-panel-closed') !== '0');
+  setPanel(localStorage.getItem('pp3d-panel-closed') !== '0');
 
   function camBasis() {
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
@@ -868,8 +908,30 @@
     };
   }
 
+  function resolveDof() {
+    let k = light.dofK, focus = light.focusDist;
+    if (light.barMode) {
+      if (!hoveredBar) return { k: 0, focus };
+      const cam = camBasis();
+      const hourStart = X(hoveredBar.hour * samplesPerHour);
+      const hourEnd = X((hoveredBar.hour + 1) * samplesPerHour);
+      const height = hourCounts[hoveredBar.day][hoveredBar.hour] * yScale * light.hScale;
+      const center = [
+        (hourStart + hourEnd) / 2,
+        0.75 + height / 2,
+        -(hoveredBar.day * P + TH / 2),
+      ];
+      focus = Math.max(1,
+        (center[0] - cam.eye[0]) * cam.fwd[0] +
+        (center[1] - cam.eye[1]) * cam.fwd[1] +
+        (center[2] - cam.eye[2]) * cam.fwd[2]);
+    }
+    return { k, focus };
+  }
+
   function renderSample() {
     const cam = camBasis();
+    const dof = renderDof || resolveDof();
     gl.useProgram(progTrace);
     gl.bindFramebuffer(gl.FRAMEBUFFER, accFb[flip]);
     gl.viewport(0, 0, RW, RH);
@@ -884,8 +946,8 @@
     gl.uniform3fv(U('uUp'), cam.up);
     gl.uniform3fv(U('uFwd'), cam.fwd);
     gl.uniform1f(U('uTanF'), Math.tan(FOV / 2));
-    gl.uniform1f(U('uDofK'), renderDof ? renderDof.k : light.dofK);
-    gl.uniform1f(U('uFocusDist'), renderDof ? renderDof.focus : light.focusDist);
+    gl.uniform1f(U('uDofK'), dof.k);
+    gl.uniform1f(U('uFocusDist'), dof.focus);
     gl.uniform1f(U('uFrame'), frame);
     gl.uniform3fv(U('uSunDir'), light.sunDir);
     gl.uniform3fv(U('uSunE'), light.sunE);
@@ -899,6 +961,11 @@
     gl.uniform1f(U('uTrans'), light.trans);
     gl.uniform1f(U('uFrostCos'), light.frostCos);
     gl.uniform1f(U('uHScale'), light.hScale);
+    gl.uniform1f(U('uThickness'), light.thickness);
+    gl.uniform1f(U('uGlowLow'), light.glowLow);
+    gl.uniform1f(U('uGlowHigh'), light.glowHigh);
+    gl.uniform1f(U('uGlowRamp'), light.glowRamp);
+    gl.uniform2i(U('uHoverBar'), hoveredBar ? hoveredBar.day : -1, hoveredBar ? hoveredBar.hour : -1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(progShow);
@@ -916,11 +983,14 @@
   let lastTick = 0, cooldown = 0, wasDone = false;
   function loop(now) {
     if (recording) {
+      const dof = resolveDof();
       recording.push({
         t: performance.now(),
         tx: target.x, ty: target.y, tz: target.z,
         dist, yaw, pitch,
-        dofK: light.dofK, focusDist: light.focusDist,
+        dofK: dof.k, focusDist: dof.focus,
+        hoverDay: hoveredBar ? hoveredBar.day : -1,
+        hoverHour: hoveredBar ? hoveredBar.hour : -1,
         tuning: captureTuning(),
       });
       recBtn.textContent = '⏹ stop · ' + fmtTime((performance.now() - recording[0].t) / 1000);
@@ -988,21 +1058,111 @@
   rotatePad.addEventListener('pointercancel', stopRotatePad);
   canvas.addEventListener('webglcontextlost', e => {
     e.preventDefault();
-    const last = +(sessionStorage.getItem('sd3d-ctxlost') || 0);
-    sessionStorage.setItem('sd3d-ctxlost', Date.now());
+    const last = +(sessionStorage.getItem('pp3d-ctxlost') || 0);
+    sessionStorage.setItem('pp3d-ctxlost', Date.now());
     if (Date.now() - last > 5000) location.reload();
     else hint.textContent = 'graphics context lost — refresh to restart';
   });
+  const tip = document.getElementById('tip');
+  const hourLabel = hour => new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    hour12: true,
+  }).format(new Date(2000, 0, 1, hour));
+  function setHoveredBar(hit) {
+    if (hoveredBar?.day === hit?.day && hoveredBar?.hour === hit?.hour) return;
+    hoveredBar = hit ? { day: hit.day, hour: hit.hour } : null;
+    reset();
+  }
+  function pointerRay(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * 2 - 1;
+    const y = 1 - (e.clientY - rect.top) / rect.height * 2;
+    const cam = camBasis();
+    const tan = Math.tan(FOV / 2);
+    const dir = [
+      cam.fwd[0] + cam.right[0] * x * tan * rect.width / rect.height + cam.up[0] * y * tan,
+      cam.fwd[1] + cam.right[1] * x * tan * rect.width / rect.height + cam.up[1] * y * tan,
+      cam.fwd[2] + cam.right[2] * x * tan * rect.width / rect.height + cam.up[2] * y * tan,
+    ];
+    const len = Math.hypot(...dir);
+    return { origin: cam.eye, direction: dir.map(value => value / len) };
+  }
+  function boxDistance(ray, min, max) {
+    let near = 0, far = Infinity;
+    for (let axis = 0; axis < 3; axis++) {
+      const d = ray.direction[axis];
+      if (Math.abs(d) < 1e-8) {
+        if (ray.origin[axis] < min[axis] || ray.origin[axis] > max[axis]) return Infinity;
+        continue;
+      }
+      let a = (min[axis] - ray.origin[axis]) / d;
+      let b = (max[axis] - ray.origin[axis]) / d;
+      if (a > b) [a, b] = [b, a];
+      near = Math.max(near, a);
+      far = Math.min(far, b);
+      if (near > far) return Infinity;
+    }
+    return near;
+  }
+  function updateHover(e) {
+    const ray = pointerRay(e);
+    let hit = null, nearest = Infinity;
+    for (let day = 0; day < nB; day++) {
+      for (let hour = 0; hour < 24; hour++) {
+        const height = hourCounts[day][hour] * yScale * light.hScale;
+        const hourStart = X(hour * samplesPerHour);
+        const hourEnd = X((hour + 1) * samplesPerHour);
+        const xMargin = (hourEnd - hourStart) * (1 - light.thickness) / 2;
+        const zCenter = day * P + TH / 2;
+        const zHalf = TH * light.thickness / 2;
+        const min = [
+          hourStart + xMargin,
+          0.75,
+          -(zCenter + zHalf),
+        ];
+        const max = [
+          hourEnd - xMargin,
+          0.75 + Math.max(1, height),
+          -(zCenter - zHalf),
+        ];
+        const distance = boxDistance(ray, min, max);
+        if (distance < nearest) {
+          nearest = distance;
+          hit = { day, hour, count: hourCounts[day][hour] };
+        }
+      }
+    }
+    if (!hit) {
+      setHoveredBar(null);
+      tip.style.display = 'none';
+      canvas.style.cursor = '';
+      return;
+    }
+    setHoveredBar(hit);
+    canvas.style.cursor = 'pointer';
+    tip.innerHTML = `<strong>${hit.count.toLocaleString()}</strong>${dayNames[hit.day]} · ${hourLabel(hit.hour)}<br>posts and comments`;
+    tip.style.display = 'block';
+    const bounds = tip.getBoundingClientRect();
+    tip.style.left = Math.min(window.innerWidth - bounds.width - 10, e.clientX + 14) + 'px';
+    tip.style.top = Math.max(10, Math.min(window.innerHeight - bounds.height - 10,
+      e.clientY - bounds.height - 14)) + 'px';
+  }
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     if (exporting) return;
+    setHoveredBar(null);
     mode = e.button === 2 ? 'rotate' : 'pan';
     if (mode === 'pan') setInteractiveRender(true);
     lastX = e.clientX; lastY = e.clientY;
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
   });
   canvas.addEventListener('pointermove', e => {
-    if (!mode || exporting) return;
+    if (!mode) {
+      if (!exporting) updateHover(e);
+      return;
+    }
+    if (exporting) return;
+    tip.style.display = 'none';
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     if (mode === 'rotate') {
@@ -1025,6 +1185,12 @@
   canvas.addEventListener('pointercancel', () => {
     mode = null;
     setInteractiveRender(false);
+  });
+  canvas.addEventListener('pointerleave', () => {
+    if (!mode) {
+      setHoveredBar(null);
+      tip.style.display = 'none';
+    }
   });
   let wheelRenderTimer = 0;
   canvas.addEventListener('wheel', e => {
@@ -1144,6 +1310,7 @@
     const saved = {
       tx: target.x, ty: target.y, tz: target.z,
       dist, yaw, pitch,
+      hoveredBar,
       tuning: captureTuning(),
     };
     const SPP = 300, FPS = 60;
@@ -1156,10 +1323,12 @@
       const s0 = rec[statePtr], s1 = rec[Math.min(statePtr + 1, rec.length - 1)];
       const u = s1.t > s0.t ? Math.min(1, Math.max(0, (ft - s0.t) / (s1.t - s0.t))) : 0;
       const L = (a, b) => a + (b - a) * u;
+      const hs = u < 0.5 ? s0 : s1;
       const state = {
         tx: L(s0.tx, s1.tx), ty: L(s0.ty, s1.ty), tz: L(s0.tz, s1.tz),
         dist: L(s0.dist, s1.dist), yaw: L(s0.yaw, s1.yaw), pitch: L(s0.pitch, s1.pitch),
         dofK: L(s0.dofK, s1.dofK), focusDist: L(s0.focusDist, s1.focusDist),
+        hoverDay: hs.hoverDay, hoverHour: hs.hoverHour,
         tuning: interpolateTuning(s0.tuning, s1.tuning, u),
       };
       state.key = JSON.stringify(state);
@@ -1208,6 +1377,7 @@
       target.x = state.tx; target.y = state.ty; target.z = state.tz;
       dist = state.dist; yaw = state.yaw; pitch = state.pitch;
       renderDof = { k: state.dofK, focus: state.focusDist };
+      hoveredBar = state.hoverDay >= 0 ? { day: state.hoverDay, hour: state.hoverHour } : null;
       syncRotatePad();
       const stateKey = state.key;
       const reusePrevious = stateKey === previousStateKey && previousBlob !== null;
@@ -1267,6 +1437,7 @@
     renderDof = null;
     target.x = saved.tx; target.y = saved.ty; target.z = saved.tz;
     dist = saved.dist; yaw = saved.yaw; pitch = saved.pitch;
+    hoveredBar = saved.hoveredBar;
     applyTuning(saved.tuning);
     syncRotatePad();
     exporting = false;
@@ -1298,7 +1469,7 @@
   window.addEventListener('resize', resize);
   resize();
   requestAnimationFrame(loop);
-  window.__sd = { sample: renderSample, spp: () => frame, camera: () => ({ yaw, pitch, target: { ...target } }), gl };   // debug hook
+  window.__pp = { sample: renderSample, spp: () => frame, camera: () => ({ yaw, pitch, target: { ...target } }), gl };   // debug hook
 })();
 </script>
 </body>

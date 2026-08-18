@@ -223,18 +223,13 @@
       <div class="prow" id="focusRow"><span>focus depth</span><input type="range" id="cFocus" min="-2000" max="4000" step="10" value="160"></div>
       <div class="prow"><span>aperture</span><input type="range" id="cAper" min="0.002" max="0.15" step="0.002" value="0.024"></div>
     </div>
-    <div class="prow"><span>keyframe secs</span><input type="range" id="cKfSec" min="0.5" max="5" step="0.25" value="2"></div>
     <div class="prow" id="tunRow">
       <select id="tunSel"></select>
       <button id="tunSave" title="Save current settings as a new tuning">save</button>
       <button id="tunDel" title="Delete the selected tuning">delete</button>
     </div>
     <div id="recBar">
-      <button id="recBtn">⏺ Record Sequence</button>
-      <button id="kfBtn" style="display:none">✚ keyframe</button>
-      <button id="clearBtn" style="display:none">clear</button>
-      <button id="prevBtn" style="display:none">▶ preview</button>
-      <button id="bakeBtn" style="display:none">bake</button>
+      <button id="recBtn">⏺ record</button>
       <span id="recInfo"></span>
     </div>
   </div>
@@ -678,9 +673,7 @@
   let hoverId = -1, pinId = -1, lastMx = -1, lastMy = -1;
   let frame = 0;
   let ovState = null;          // replay override for offline rendering
-  let recording = false;       // keyframe-recording mode
-  let previewing = null;       // { t0, saved } while previewing the sequence
-  let seq = [];                // keyframe sequence
+  let recording = null;        // live state snapshots while recording
   let exporting = false;
   function resolveDof() {
     let k = light.dofK, f = light.focusZ;
@@ -696,11 +689,31 @@
 
   // ---- lighting controls ----
   const ctl = {};
-  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper', 'cKfSec']) {
+  for (const id of ['cAz', 'cEl', 'cSharp', 'cSunC', 'cSunI', 'cSkyC', 'cSkyI', 'cFogC', 'cFogT', 'cSph', 'cWall', 'cBack', 'cLbl', 'cPickBg', 'cPickTx', 'cPersp', 'cDofOn', 'cPostM', 'cFocus', 'cAper']) {
     ctl[id] = document.getElementById(id);
   }
   const getV = el => el.type === 'checkbox' ? el.checked : el.value;
   const setV = (el, v) => { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
+  const captureTuning = () => Object.fromEntries(Object.entries(ctl).map(([id, el]) => [id, getV(el)]));
+  const interpolateTuning = (a, b, u) => Object.fromEntries(Object.entries(ctl).map(([id, el]) => {
+    if (el.type !== 'range') return [id, u < 0.5 ? a[id] : b[id]];
+    return [id, String(+a[id] + (+b[id] - +a[id]) * u)];
+  }));
+  const applyTuning = state => {
+    for (const id in ctl) if (state[id] !== undefined) setV(ctl[id], state[id]);
+    readLight();
+  };
+  const pruneRecording = rec => {
+    if (rec.length < 3) return rec;
+    const key = s => JSON.stringify(s, (name, value) => name === 't' ? undefined : value);
+    const out = [rec[0]];
+    for (let i = 1; i < rec.length - 1; i++) {
+      const current = key(rec[i]);
+      if (current !== key(rec[i - 1]) || current !== key(rec[i + 1])) out.push(rec[i]);
+    }
+    out.push(rec[rec.length - 1]);
+    return out;
+  };
   try {
     const saved = JSON.parse(localStorage.getItem('pt-light') || 'null');
     if (saved) for (const id in ctl) {
@@ -806,17 +819,16 @@
   }
 
   function loop() {
-    if (previewing) {
-      const totalMs = (seq.length - 1) * +ctl.cKfSec.value * 1000;
-      const tm = Math.min(performance.now() - previewing.t0, totalMs);
-      const s = kfState(tm);
-      pan.x = s.px; pan.y = s.py;
-      zoom = s.zoom; yaw = s.yaw; pitch = s.pitch;
-      pinId = s.pinId; hoverId = -1;
-      ovState = { hoverId: -1, pinId: s.pinId, dofK: s.dofK, focusZ: s.focusZ };
-      frame = 0;
-      updatePick(0, 0);
-      if (tm >= totalMs) stopPreview();
+    if (recording) {
+      const dof = resolveDof();
+      recording.push({
+        t: performance.now(),
+        px: pan.x, py: pan.y, zoom, yaw, pitch,
+        hoverId, pinId, mx: lastMx, my: lastMy,
+        dofK: dof.k, focusZ: dof.f,
+        tuning: captureTuning(),
+      });
+      recBtn.textContent = '⏹ stop · ' + fmtTime((performance.now() - recording[0].t) / 1000);
     }
     if (!exporting && frame < MAX_SPP) {
       renderSample();
@@ -846,7 +858,7 @@
 
   // ---- saved tunings ----
   const BUILTIN_TUNINGS = [
-    { name: 'Default', vals: { cAz: '25', cEl: '73', cSharp: '0', cSunC: '#cfbaaf', cSunI: '11.95', cSkyC: '#4977a2', cSkyI: '3.6', cFogC: '#161718', cFogT: '50', cSph: '2.2', cWall: '#212121', cBack: '#212121', cLbl: '#ffffff', cPickBg: '#0f0f0f', cPickTx: '#ffffff', cPersp: true, cDofOn: true, cPostM: true, cFocus: '160', cAper: '0.024', cKfSec: '2' } },
+    { name: 'Default', vals: { cAz: '25', cEl: '73', cSharp: '0', cSunC: '#cfbaaf', cSunI: '11.95', cSkyC: '#4977a2', cSkyI: '3.6', cFogC: '#161718', cFogT: '50', cSph: '2.2', cWall: '#212121', cBack: '#212121', cLbl: '#ffffff', cPickBg: '#0f0f0f', cPickTx: '#ffffff', cPersp: true, cDofOn: true, cPostM: true, cFocus: '160', cAper: '0.024' } },
   ];
   const tunSel = document.getElementById('tunSel');
   const tunSave = document.getElementById('tunSave');
@@ -1313,7 +1325,7 @@
   syncRotatePad();
   let rotatePadPointer = null, rotatePadX = 0, rotatePadY = 0;
   rotatePad.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || exporting || previewing) return;
+    if (e.button !== 0 || exporting) return;
     rotatePadPointer = e.pointerId;
     rotatePadX = e.clientX;
     rotatePadY = e.clientY;
@@ -1321,7 +1333,7 @@
     e.preventDefault();
   });
   rotatePad.addEventListener('pointermove', e => {
-    if (e.pointerId !== rotatePadPointer || exporting || previewing) return;
+    if (e.pointerId !== rotatePadPointer || exporting) return;
     rotateCamera(e.clientX - rotatePadX, e.clientY - rotatePadY);
     rotatePadX = e.clientX;
     rotatePadY = e.clientY;
@@ -1334,14 +1346,14 @@
   rotatePad.addEventListener('pointercancel', stopRotatePad);
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
-    if (exporting || previewing) return;
+    if (exporting) return;
     mode = e.button === 2 ? 'rotate' : 'pan';
     if (mode === 'pan') setInteractiveRender(true);
     downX = lastX = e.clientX; downY = lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
-    if (exporting || previewing) return;
+    if (exporting) return;
     lastMx = e.clientX; lastMy = e.clientY;
     if (mode) {
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -1361,7 +1373,7 @@
     }
   });
   canvas.addEventListener('pointerup', e => {
-    if (exporting || previewing) return;
+    if (exporting) return;
     const wasPan = mode === 'pan';
     mode = null;
     if (wasPan && Math.hypot(e.clientX - downX, e.clientY - downY) < 5) {
@@ -1377,7 +1389,7 @@
   let wheelRenderTimer = 0;
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    if (exporting || previewing) return;
+    if (exporting) return;
     setInteractiveRender(true);
     clearTimeout(wheelRenderTimer);
     wheelRenderTimer = setTimeout(() => setInteractiveRender(false), 160);
@@ -1389,118 +1401,39 @@
     reset();
   }, { passive: false });
 
-  // ---- keyframe sequences: capture states, ease between them, and either
-  // preview live or bake offline into a numbered PNG sequence ----
+  // ---- live recording: capture interaction timing, then replay offline at
+  // high quality into a numbered PNG sequence and MP4 ----
   const recBtn = document.getElementById('recBtn');
-  const kfBtn = document.getElementById('kfBtn');
-  const clearBtn = document.getElementById('clearBtn');
-  const prevBtn = document.getElementById('prevBtn');
-  const bakeBtn = document.getElementById('bakeBtn');
   const recInfo = document.getElementById('recInfo');
   let cancelExport = false;
-  try { seq = JSON.parse(localStorage.getItem('pt-seq') || '[]'); } catch (e) {}
-  const saveSeq = () => localStorage.setItem('pt-seq', JSON.stringify(seq));
-
-  // eased state along the sequence timeline (tm in ms)
-  function kfState(tm) {
-    const segS = +ctl.cKfSec.value * 1000;
-    const seg = Math.max(0, Math.min(Math.floor(tm / segS), seq.length - 2));
-    const u = Math.min(1, Math.max(0, (tm - seg * segS) / segS));
-    const e = u * u * (3 - 2 * u);   // ease in / ease out
-    const a = seq[seg], b = seq[seg + 1];
-    const L = (x, y) => x + (y - x) * e;
-    return {
-      px: L(a.px, b.px), py: L(a.py, b.py), zoom: L(a.zoom, b.zoom),
-      yaw: L(a.yaw, b.yaw), pitch: L(a.pitch, b.pitch),
-      pinId: e < 0.5 ? a.pinId : b.pinId,
-      dofK: L(a.dofK, b.dofK), focusZ: L(a.focusZ, b.focusZ),
-    };
-  }
 
   function updateRecUI() {
-    const show = (el, on) => { el.style.display = on ? '' : 'none'; };
-    if (exporting) {
-      show(recBtn, true); recBtn.textContent = '✕ cancel';
-      show(kfBtn, false); show(clearBtn, false); show(prevBtn, false); show(bakeBtn, false);
-      return;
-    }
-    if (previewing) {
-      show(recBtn, false); show(kfBtn, false); show(clearBtn, false); show(bakeBtn, false);
-      show(prevBtn, true); prevBtn.textContent = '⏹ stop preview';
-      return;
-    }
-    recBtn.classList.toggle('on', recording);
-    show(recBtn, true);
-    recBtn.textContent = recording ? '⏹ stop' : '⏺ Record Sequence';
-    show(kfBtn, recording);
-    if (recording) kfBtn.textContent = `✚ keyframe (${seq.length})`;
-    show(clearBtn, !recording && seq.length > 0);
-    show(prevBtn, !recording && seq.length > 1);
-    prevBtn.textContent = '▶ preview';
-    show(bakeBtn, !recording && seq.length > 1);
-    recInfo.textContent = seq.length
-      ? `${seq.length} keyframes · ${((seq.length - 1) * +ctl.cKfSec.value).toFixed(1)}s`
-      : '';
+    recBtn.classList.toggle('on', !!recording);
+    recBtn.textContent = exporting ? '✕ cancel' : recording ? '⏹ stop' : '⏺ record';
   }
 
-  function stopPreview() {
-    if (!previewing) return;
-    const s = previewing.saved;
-    previewing = null;
-    ovState = null;
-    pan.x = s.px; pan.y = s.py;
-    zoom = s.zoom; yaw = s.yaw; pitch = s.pitch;
-    pinId = s.pinId; hoverId = s.hoverId;
-    frame = 0;
-    updatePick(lastMx, lastMy);
-    updateRecUI();
-  }
-
-  recBtn.addEventListener('click', () => {
+  recBtn.addEventListener('click', async () => {
     if (exporting) { cancelExport = true; return; }
-    recording = !recording;
-    updateRecUI();
-  });
-  kfBtn.addEventListener('click', () => {
-    const dof = resolveDof();
-    seq.push({
-      px: pan.x, py: pan.y, zoom, yaw, pitch, pinId,
-      dofK: dof.k, focusZ: dof.f,
-    });
-    saveSeq();
-    updateRecUI();
-  });
-  clearBtn.addEventListener('click', () => {
-    seq = [];
-    saveSeq();
-    updateRecUI();
-  });
-  prevBtn.addEventListener('click', () => {
-    if (previewing) { stopPreview(); return; }
-    if (seq.length < 2) return;
-    previewing = {
-      t0: performance.now(),
-      saved: { px: pan.x, py: pan.y, zoom, yaw, pitch, pinId, hoverId },
-    };
-    pickPanel.style.pointerEvents = 'none';
-    updateRecUI();
-  });
-  bakeBtn.addEventListener('click', async () => {
-    if (seq.length < 2) return;
-    if (!window.showDirectoryPicker) {
-      recInfo.textContent = 'folder access is not supported in this browser';
+    if (!recording) {
+      if (!window.showDirectoryPicker) {
+        recInfo.textContent = 'folder access is not supported in this browser';
+        return;
+      }
+      recording = [];
+      recInfo.textContent = '';
+      updateRecUI();
       return;
     }
+    const rec = recording;
+    recording = null;
+    updateRecUI();
+    if (rec.length < 2) return;
     let dir;
     try {
       dir = await window.showDirectoryPicker({ mode: 'readwrite' });
-    } catch (e) { return; }
-    const FPS = 60;
-    const rec = [];
-    const total = Math.round((seq.length - 1) * +ctl.cKfSec.value * FPS);
-    for (let i = 0; i <= total; i++) {
-      const s = kfState(i * 1000 / FPS);
-      rec.push({ t: i * 1000 / FPS, hoverId: -1, mx: 0, my: 0, ...s });
+    } catch (e) {
+      recInfo.textContent = 'export cancelled';
+      return;
     }
     exportFrames(rec, dir);
   });
@@ -1628,14 +1561,34 @@
   }
 
   async function exportFrames(rec, dir) {
+    rec = pruneRecording(rec);
     exporting = true;
     cancelExport = false;
     updateRecUI();
-    const saved = { px: pan.x, py: pan.y, zoom, yaw, pitch };
+    const saved = { px: pan.x, py: pan.y, zoom, yaw, pitch, tuning: captureTuning() };
     pickPanel.style.display = 'none';
     const SPP = 300, FPS = 60;
     const t0r = rec[0].t;
     const total = Math.max(1, Math.round((rec[rec.length - 1].t - t0r) / 1000 * FPS));
+    let statePtr = 0;
+    const frameStates = Array.from({ length: total }, (_, fi) => {
+      const ft = t0r + fi * 1000 / FPS;
+      while (statePtr < rec.length - 2 && rec[statePtr + 1].t <= ft) statePtr++;
+      const s0 = rec[statePtr], s1 = rec[Math.min(statePtr + 1, rec.length - 1)];
+      const u = s1.t > s0.t ? Math.min(1, Math.max(0, (ft - s0.t) / (s1.t - s0.t))) : 0;
+      const L = (a, b) => a + (b - a) * u;
+      const state = {
+        px: L(s0.px, s1.px), py: L(s0.py, s1.py), zoom: L(s0.zoom, s1.zoom),
+        yaw: L(s0.yaw, s1.yaw), pitch: L(s0.pitch, s1.pitch),
+        hoverId: s0.hoverId, pinId: s0.pinId, mx: s0.mx, my: s0.my,
+        dofK: L(s0.dofK, s1.dofK), focusZ: L(s0.focusZ, s1.focusZ),
+        tuning: interpolateTuning(s0.tuning, s1.tuning, u),
+      };
+      state.key = JSON.stringify(state);
+      return state;
+    });
+    const uniqueTotal = frameStates.reduce((n, state, i) =>
+      n + (i === 0 || state.key !== frameStates[i - 1].key ? 1 : 0), 0);
     const ec = document.createElement('canvas');
     ec.width = W & ~1;      // even dimensions, required for h.264 4:2:0
     ec.height = H & ~1;
@@ -1673,48 +1626,53 @@
     // if the window is briefly covered (rAF pauses in hidden windows)
     const raf = () => new Promise(r => { requestAnimationFrame(() => r()); setTimeout(r, 250); });
     const tStart = performance.now();
-    let ptr = 0, fi = 0;
+    let previousStateKey = null, previousBlob = null, reusedFrames = 0, renderedFrames = 0;
+    let fi = 0;
     for (; fi < total && !cancelExport; fi++) {
-      const ft = t0r + fi * 1000 / FPS;
-      while (ptr < rec.length - 2 && rec[ptr + 1].t <= ft) ptr++;
-      const s0 = rec[ptr], s1 = rec[Math.min(ptr + 1, rec.length - 1)];
-      const u = s1.t > s0.t ? Math.min(1, Math.max(0, (ft - s0.t) / (s1.t - s0.t))) : 0;
-      const L = (a, b) => a + (b - a) * u;
-      pan.x = L(s0.px, s1.px); pan.y = L(s0.py, s1.py);
-      zoom = L(s0.zoom, s1.zoom);
-      yaw = L(s0.yaw, s1.yaw);
-      pitch = L(s0.pitch, s1.pitch);
+      const state = frameStates[fi];
+      applyTuning(state.tuning);
+      pan.x = state.px; pan.y = state.py;
+      zoom = state.zoom; yaw = state.yaw; pitch = state.pitch;
       ovState = {
-        hoverId: s0.hoverId, pinId: s0.pinId, mx: s0.mx, my: s0.my,
-        dofK: L(s0.dofK, s1.dofK), focusZ: L(s0.focusZ, s1.focusZ),
+        hoverId: state.hoverId, pinId: state.pinId, mx: state.mx, my: state.my,
+        dofK: state.dofK, focusZ: state.focusZ,
       };
-      frame = 0;
-      let done = 0;
-      while (done < SPP && !cancelExport) {
-        const n = Math.min(60, SPP - done);
-        for (let k = 0; k < n; k++) renderSample();
-        done += n;
-        await raf();
+      const stateKey = state.key;
+      const reusePrevious = stateKey === previousStateKey && previousBlob !== null;
+      if (!reusePrevious) {
+        frame = 0;
+        let done = 0;
+        while (done < SPP && !cancelExport) {
+          const n = Math.min(60, SPP - done);
+          for (let k = 0; k < n; k++) renderSample();
+          done += n;
+          await raf();
+        }
+        if (cancelExport) break;
+        renderSample();               // fresh backbuffer in this task
+        ectx.drawImage(canvas, 0, 0);
+        drawPanelInto(ectx, ovState);
+        previousBlob = await new Promise(r => ec.toBlob(r, 'image/png'));
+        previousStateKey = stateKey;
+        renderedFrames++;
+      } else {
+        reusedFrames++;
       }
-      if (cancelExport) break;
-      renderSample();               // fresh backbuffer in this task
-      ectx.drawImage(canvas, 0, 0);
-      drawPanelInto(ectx, ovState);
       if (venc && !vencErr) {
         const vf = new VideoFrame(ec, { timestamp: fi * 1e6 / FPS, duration: 1e6 / FPS });
         venc.encode(vf, { keyFrame: fi % 120 === 0 });
         vf.close();
       }
-      const blob = await new Promise(r => ec.toBlob(r, 'image/png'));
       const fh = await dir.getFileHandle('frame_' + String(fi + 1).padStart(4, '0') + '.png', { create: true });
       const wr = await fh.createWritable();
-      await wr.write(blob);
+      await wr.write(previousBlob);
       await wr.close();
       const el = (performance.now() - tStart) / 1000;
-      recInfo.textContent = `rendering ${fi + 1}/${total} · eta ${fmtTime(el / (fi + 1) * (total - fi - 1))} · keep window visible`;
+      const eta = renderedFrames ? el / renderedFrames * (uniqueTotal - renderedFrames) : 0;
+      recInfo.textContent = `rendering ${fi + 1}/${total} · ${reusedFrames} reused · eta ${fmtTime(eta)} · keep window visible`;
     }
     // mux the encoded video and drop it next to the frames
-    let videoNote = '';
+    let videoNote = venc ? ' · MP4 was not created' : ' · PNG frames only (MP4 encoding unavailable)';
     if (venc) {
       try {
         if (!cancelExport && !vencErr) {
@@ -1726,7 +1684,10 @@
             const wr = await fh.createWritable();
             await wr.write(mp4);
             await wr.close();
-            videoNote = ' · recording.mp4';
+            const savedFile = await fh.getFile();
+            videoNote = savedFile.size
+              ? ` · recording.mp4 saved in "${dir.name || 'selected folder'}"`
+              : ' · MP4 file was empty';
           }
         }
         venc.close();
@@ -1735,6 +1696,7 @@
     ovState = null;
     pan.x = saved.px; pan.y = saved.py;
     zoom = saved.zoom; yaw = saved.yaw; pitch = saved.pitch;
+    applyTuning(saved.tuning);
     exporting = false;
     updateRecUI();
     recInfo.textContent = (cancelExport ? `cancelled · ${fi} frames written` : `done · ${total} frames · ${FPS} fps`) + videoNote;

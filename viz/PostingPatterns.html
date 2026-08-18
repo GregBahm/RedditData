@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark-neumorphic">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Posting Patterns</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --surface-1: #1a1a19;
+      --text-primary: #fff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --gridline: #2c2c2a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; min-width: 840px; margin: 0; }
+  body {
+    padding: 10px 12px 14px;
+    overflow: hidden;
+    background: var(--surface);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 24px;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+  .summary strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .heat-key {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .heat-ramp {
+    width: 90px;
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(
+      90deg,
+      rgb(137, 135, 129),
+      rgb(42, 120, 214),
+      rgb(139, 58, 199),
+      rgb(227, 61, 61),
+      rgb(239, 126, 34),
+      rgb(245, 211, 39)
+    );
+  }
+  .pattern-grid {
+    display: grid;
+    grid-template-columns: 46px repeat(7, minmax(108px, 1fr));
+    grid-template-rows: 28px repeat(24, 30px);
+    gap: 3px;
+    margin-top: 6px;
+  }
+  .corner,
+  .day-label,
+  .hour-label,
+  .pattern-cell {
+    min-width: 0;
+    border-radius: 8px;
+  }
+  .corner,
+  .day-label,
+  .hour-label {
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .corner,
+  .hour-label { justify-content: flex-end; padding-right: 7px; }
+  .day-label { justify-content: center; }
+  .pattern-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cell-text);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    transition: filter 100ms ease, transform 100ms ease;
+  }
+  .pattern-cell:hover {
+    filter: brightness(1.18);
+    transform: translateY(-1px);
+  }
+  .empty {
+    display: grid;
+    min-height: 240px;
+    place-items: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+</style>
+<link rel="stylesheet" href="themes.css">
+</head>
+<body>
+<div id="root"></div>
+<script src="data.js"></script>
+<script src="import/dataset-store.js"></script>
+<script>
+const root = document.getElementById('root');
+(async () => {
+const sourceData = await RedditDataset.getActive(REDDIT_DATA);
+const activity = sourceData
+  .map(item => ({
+    item,
+    date: new Date(item.date.replace(' UTC', 'Z').replace(' ', 'T')),
+    }))
+    .filter(record => Number.isFinite(record.date.getTime()));
+
+  if (!activity.length) {
+    root.className = 'empty';
+    root.textContent = 'No Reddit activity is available for this view.';
+    return;
+  }
+
+  const counts = Array.from({ length: 24 }, () =>
+    Array(7).fill(0)
+  );
+
+  for (const { date } of activity) {
+    const day = (date.getDay() + 6) % 7;
+    counts[date.getHours()][day]++;
+  }
+
+  const maxCount = Math.max(1, ...counts.flat());
+  const heatStops = [
+    [137, 135, 129],
+    [42, 120, 214],
+    [139, 58, 199],
+    [227, 61, 61],
+    [239, 126, 34],
+    [245, 211, 39],
+  ];
+  function heatColor(value) {
+    const scaled = Math.min(0.9999, Math.max(0, value)) * (heatStops.length - 1);
+    const index = Math.floor(scaled);
+    const fraction = scaled - index;
+    const start = heatStops[index];
+    const end = heatStops[index + 1];
+    return `rgb(${start.map((channel, i) =>
+      Math.round(channel + (end[i] - channel) * fraction)
+    ).join(', ')})`;
+  }
+  const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const summary = document.createElement('div');
+  summary.className = 'summary';
+  const description = document.createElement('strong');
+  description.textContent = `${activity.length.toLocaleString()} posts and comments · local browser time`;
+  const heatKey = document.createElement('span');
+  heatKey.className = 'heat-key';
+  heatKey.append(document.createTextNode('Less'));
+  const heatRamp = document.createElement('span');
+  heatRamp.className = 'heat-ramp';
+  heatKey.append(heatRamp, document.createTextNode('More'));
+  summary.append(description, heatKey);
+
+  const grid = document.createElement('div');
+  grid.className = 'pattern-grid';
+  const corner = document.createElement('div');
+  corner.className = 'corner';
+  corner.textContent = 'Hour';
+  grid.append(corner);
+  for (const dayName of dayNames) {
+    const label = document.createElement('div');
+    label.className = 'day-label';
+    label.textContent = dayName;
+    grid.append(label);
+  }
+
+  for (let hour = 0; hour < 24; hour++) {
+    const hourLabel = document.createElement('div');
+    hourLabel.className = 'hour-label';
+    hourLabel.textContent = new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      hour12: true,
+    }).format(new Date(2000, 0, 1, hour));
+    grid.append(hourLabel);
+
+    for (let day = 0; day < 7; day++) {
+      const cell = document.createElement('div');
+      cell.className = 'pattern-cell';
+      const total = counts[hour][day];
+      const intensity = total / maxCount;
+      cell.style.background = heatColor(intensity);
+      cell.style.setProperty('--cell-text', intensity > 0.78 ? '#222' : '#fff');
+      cell.textContent = total.toLocaleString();
+      cell.title = `${dayNames[day]} at ${hourLabel.textContent}: ${total.toLocaleString()} posts and comments`;
+      cell.setAttribute('aria-label', cell.title);
+      grid.append(cell);
+    }
+  }
+
+  root.append(summary, grid);
+
+  window.addEventListener('wheel', event => {
+    event.preventDefault();
+    parent.postMessage({
+      type: 'reddit-data-page-scroll',
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode,
+    }, location.origin === 'null' ? '*' : location.origin);
+  }, { passive: false });
+})().catch(error => {
+  root.className = 'empty';
+  root.textContent = `Posting Patterns could not be rendered: ${error.message || error}`;
+  console.error(error);
+});
+</script>
+</body>
+</html>

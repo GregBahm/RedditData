@@ -84,18 +84,28 @@ html[data-theme="dark-neumorphic"] button.toggle:active {
   box-shadow: var(--theme-inset-shadow);
 }
 
-html[data-theme="dark-neumorphic"] .section-view-link {
+html[data-theme="dark-neumorphic"] .section-view-link,
+html[data-theme="dark-neumorphic"] #importOpen {
   position: relative;
   overflow: hidden;
   padding: 3px 11px;
-  background: #142231;
   border-radius: 999px;
-  color: #8da9c2;
   box-shadow: 0 5px 11px rgba(7, 10, 14, 0.52);
   transform: translateY(-1px);
 }
 
-html[data-theme="dark-neumorphic"] .section-view-link::after {
+html[data-theme="dark-neumorphic"] .section-view-link {
+  background: #142231;
+  color: #8da9c2;
+}
+
+html[data-theme="dark-neumorphic"] #importOpen {
+  background: #1769e0;
+  color: #fff;
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link::after,
+html[data-theme="dark-neumorphic"] #importOpen::after {
   content: "";
   position: absolute;
   top: -50%;
@@ -112,18 +122,29 @@ html[data-theme="dark-neumorphic"] .section-view-link::after {
   pointer-events: none;
 }
 
-html[data-theme="dark-neumorphic"] .section-view-link:hover {
-  background: #182a3b;
-  color: #9bb8d1;
+html[data-theme="dark-neumorphic"] .section-view-link:hover,
+html[data-theme="dark-neumorphic"] #importOpen:hover {
   text-decoration: none;
   box-shadow: 0 7px 14px rgba(7, 10, 14, 0.58);
 }
 
-html[data-theme="dark-neumorphic"] .section-view-link:hover::after {
+html[data-theme="dark-neumorphic"] .section-view-link:hover {
+  background: #182a3b;
+  color: #9bb8d1;
+}
+
+html[data-theme="dark-neumorphic"] #importOpen:hover {
+  background: #2478ef;
+  color: #fff;
+}
+
+html[data-theme="dark-neumorphic"] .section-view-link:hover::after,
+html[data-theme="dark-neumorphic"] #importOpen:hover::after {
   animation: view-link-glint 650ms ease-out;
 }
 
-html[data-theme="dark-neumorphic"] .section-view-link:active {
+html[data-theme="dark-neumorphic"] .section-view-link:active,
+html[data-theme="dark-neumorphic"] #importOpen:active {
   box-shadow: 0 3px 7px rgba(7, 10, 14, 0.48);
   transform: translateY(0);
 }
@@ -134,7 +155,8 @@ html[data-theme="dark-neumorphic"] .section-view-link:active {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html[data-theme="dark-neumorphic"] .section-view-link:hover::after {
+  html[data-theme="dark-neumorphic"] .section-view-link:hover::after,
+  html[data-theme="dark-neumorphic"] #importOpen:hover::after {
     animation: none;
   }
 }
